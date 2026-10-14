@@ -361,7 +361,10 @@ function getHtml(nonce: string, cspSource: string): string {
         const status = record.source === 'local' && record.status === 'active' ? '进行中' : showStatus(record.status);
         const projectLabel = record.source === 'local' ? '工作目录' : '环境';
         const actions = record.source === 'local'
-          ? '<button class="primary" data-action="open" data-key="' + escapeHtml(record.key) + '" title="打开整条会话">在 ChatGPT Windows 中打开</button><button data-action="openInIde" data-key="' + escapeHtml(record.key) + '" title="打开整条会话">在 VS Code Codex 中打开</button><button data-action="rename" data-key="' + escapeHtml(record.key) + '">修改名称</button><button class="danger" data-action="delete" data-key="' + escapeHtml(record.key) + '">删除本地记录</button>'
+          ? (snapshot.cli.platform === 'linux'
+            ? '<button class="primary" data-action="openInIde" data-key="' + escapeHtml(record.key) + '" title="打开整条会话">在 VS Code Codex 中打开</button>'
+            : '<button class="primary" data-action="open" data-key="' + escapeHtml(record.key) + '" title="打开整条会话">在 ChatGPT Windows 中打开</button><button data-action="openInIde" data-key="' + escapeHtml(record.key) + '" title="打开整条会话">在 VS Code Codex 中打开</button>')
+            + '<button data-action="rename" data-key="' + escapeHtml(record.key) + '">修改名称</button><button class="danger" data-action="delete" data-key="' + escapeHtml(record.key) + '">删除本地记录</button>'
           : '<button class="primary" data-action="open" data-key="' + escapeHtml(record.key) + '">打开云端会话</button><button data-action="details" data-key="' + escapeHtml(record.key) + '">详情</button>';
       const questionPicker = record.source === 'local'
           ? questionPickerMarkup(record)
@@ -518,12 +521,12 @@ function getHtml(nonce: string, cspSource: string): string {
       const source = cli.source === 'configured' ? '本机用户配置' : cli.source === 'chatgpt' ? 'ChatGPT/Codex 扩展随附' : cli.source === 'PATH' ? 'PATH 自动检测' : '未检测到';
       const verification = cli.verified === true ? '已验证' : cli.verified === false ? '验证失败' : '尚未验证';
       const remote = cli.remoteWarning ? '<div class="notice">' + escapeHtml(cli.remoteWarning) + '</div>' : '';
-      $('#cliView').innerHTML = '<section class="section"><h2>Codex App Server / CLI</h2><p class="small-note">默认使用已安装的 ChatGPT/Codex VS Code 扩展随附 CLI；也可配置其他 Codex CLI 启动程序。此处不是 ChatGPT Windows 桌面应用主程序。</p><label>当前路径</label><div class="path">' + escapeHtml(cli.path || '未检测到 Codex CLI') + '</div>'
+      $('#cliView').innerHTML = '<section class="section"><h2>Codex App Server / CLI</h2><p class="small-note">默认使用已安装的 ChatGPT/Codex VS Code 扩展随附 CLI；也可配置其他 Codex CLI 启动程序。此处不是 ChatGPT 桌面应用主程序。</p><label>当前路径</label><div class="path">' + escapeHtml(cli.path || '未检测到 Codex CLI') + '</div>'
         + '<div class="metric"><div><div class="muted subtle">来源</div><b>' + source + '</b></div><div><div class="muted subtle">验证</div><b>' + verification + '</b></div><div><div class="muted subtle">版本</div><b>' + escapeHtml(cli.version || '未提供') + '</b></div></div>'
         + (cli.verificationMessage ? '<div class="notice ' + (cli.verified === false ? 'error' : '') + '">' + escapeHtml(cli.verificationMessage) + '</div>' : '')
         + '<div class="setting-buttons"><button data-command="detectCli">重新检测</button><button class="primary" data-command="configureCli">配置路径</button><button data-command="verifyCli">验证</button><button class="danger" data-command="clearCli">清除路径覆盖</button></div></section>'
         + '<section class="section"><h2>运行环境</h2>' + remote + '<div><span class="muted">扩展宿主：</span>' + escapeHtml(cli.hostEnvironment) + '</div><div class="path" style="margin-top:6px"><span class="muted">Codex Home：</span>' + escapeHtml(cli.codexHome || '尚未读取') + '</div>'
-        + '<p class="small-note">本扩展通过本机 Codex CLI 启动 App Server，以 stdio JSONL 读取对话。若 VS Code 在 WSL 或远程主机运行，其 Codex Home 可能与 Windows 桌面应用不同。</p></section>';
+        + '<p class="small-note">本扩展通过本机 Codex CLI 启动 App Server，以 stdio JSONL 读取对话。若 VS Code 在 WSL 或远程主机运行，其 Codex Home 可能与本机桌面应用不同。</p></section>';
     }
     function renderState() {
       renderNotices();
@@ -709,7 +712,10 @@ function getHtml(nonce: string, cspSource: string): string {
         const browser = transcriptAvailable
           ? '<section id="transcriptPanel" class="transcript-panel" aria-label="会话内容"><div class="transcript-toolbar"><button type="button" data-action="loadEarlier">更早 10 轮</button><span id="transcriptRange" class="muted subtle" aria-live="polite"></span><button type="button" data-action="loadLater">更新 10 轮</button></div><div id="transcriptMessages" class="transcript-messages"></div></section>'
           : '<div class="empty">App Server 未返回此会话的轮次内容。</div>';
-        detailHtml += summary + browser + '<div class="actions conversation-actions"><button class="primary" data-action="open" data-key="' + escapeHtml(record.key || '') + '">在 ChatGPT Windows 中打开</button><button data-action="openInIde" data-key="' + escapeHtml(record.key || '') + '">在 VS Code Codex 中打开</button></div>';
+        const openActions = snapshot.cli.platform === 'linux'
+          ? '<button class="primary" data-action="openInIde" data-key="' + escapeHtml(record.key || '') + '">在 VS Code Codex 中打开</button>'
+          : '<button class="primary" data-action="open" data-key="' + escapeHtml(record.key || '') + '">在 ChatGPT Windows 中打开</button><button data-action="openInIde" data-key="' + escapeHtml(record.key || '') + '">在 VS Code Codex 中打开</button>';
+        detailHtml += summary + browser + '<div class="actions conversation-actions">' + openActions + '</div>';
       } else {
         detailHtml += '<h3 style="margin-top:14px">云端摘要</h3><pre>' + escapeHtml(record.preview || '服务未提供摘要。') + '</pre><p class="small-note">CLI 云端列表未提供受支持的完整会话详情接口，本页仅展示列表返回的字段。</p>';
       }

@@ -1,6 +1,6 @@
 ﻿# Codex Conversation Manager
 
-Windows-first VS Code extension for browsing local Codex conversations and Codex Cloud tasks alongside the Codex extension.
+VS Code extension for Windows and Linux that browses local Codex conversations and Codex Cloud tasks alongside the Codex extension.
 
 ## Features
 
@@ -12,10 +12,10 @@ Windows-first VS Code extension for browsing local Codex conversations and Codex
 - Opens local threads using their App Server thread ID and the `codex://threads/<thread-id>` URI. Cloud tasks only use a URL returned by the CLI.
 - Shows **5小时剩余** and **周剩余** with their percentages and reset times, plus the last session-list refresh time at the end of the **Codex 对话管理器** view title. The refresh action is in the expanded view toolbar and is available through the Command Palette. The current VS Code view API does not render view-title actions in the collapsed view row; the session-list timestamp remains in the title, but the refresh icon is not shown there. The session list refreshes at startup, on demand, after session changes, and every 15 minutes; the title timestamp updates when a refresh completes. The right side of the VS Code status bar shows the same remaining percentages; its tooltip lists each quota window and reset time, and clicking it opens account usage details. Account usage refreshes at startup, on demand, and every five minutes.
 - The **账户用量** page labels the primary and weekly windows **5小时剩余** and **周剩余**, while retaining used percentages, exact reset times, and countdowns that update every minute. Its progress bars use blue for remaining quota and gray for used quota. Daily token activity can switch between a chronological line chart and the existing data list; chart dates and timestamp-based labels use Beijing time (`Asia/Shanghai`). The page also shows the available reset count returned by the Codex service and each available reset credit's expiration time in the local timezone; missing per-credit expiry data is labeled **服务未提供**.
-- Local sessions can be opened either in the ChatGPT Windows app or in the Codex VS Code extension's `/local/<thread-id>` route. Cloud tasks continue to use their returned URL.
-- Every local conversation card has a searchable question dropdown that loads all user questions on demand. The ChatGPT Windows and VS Code Codex buttons open the full conversation; they do not jump to a selected question. The details page keeps a paged transcript without repeating the question list.
+- Windows local sessions can be opened in the ChatGPT desktop app or in the Codex VS Code extension's `/local/<thread-id>` route. Linux local sessions open through the Codex VS Code extension. Cloud tasks continue to use their returned URL.
+- Every local conversation card has a searchable question dropdown that loads all user questions on demand. The Windows ChatGPT desktop and VS Code Codex buttons open the full conversation; on Linux, the VS Code Codex button is the available local-session route. They do not jump to a selected question. The details page keeps a paged transcript without repeating the question list.
 - Supports local rename and confirmed permanent deletion through App Server methods. If another Codex client holds an active writer lock, deletion is safely rejected with steps to finish and close that session before refreshing and retrying.
-- Uses the App Server CLI bundled with the installed ChatGPT/Codex VS Code extension by default, with PATH fallback and a machine-scoped path override. It verifies App Server support and does not touch the IDE extension's development-only CLI setting.
+- Uses the current-platform App Server CLI bundled with the installed ChatGPT/Codex VS Code extension by default (including `bin/linux-x86_64/codex` on Linux), with PATH fallback and a machine-scoped path override. It verifies App Server support and does not touch the IDE extension's development-only CLI setting.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ The extension does not read OAuth credential files, passwords, or cookies. Local
     npm install
     npm run compile
     npm run package
-    code --install-extension .\codex-conversation-manager-0.2.24.vsix --force
+    code --install-extension ./codex-conversation-manager-0.2.25.vsix --force
 
 Open the Codex view container and choose **Codex 对话管理器**. If the Codex container cannot be detected, run **Sponge: 打开 Codex 对话管理器** from the Command Palette.
 

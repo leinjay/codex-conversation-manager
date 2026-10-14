@@ -72,6 +72,7 @@ export interface UsageSnapshot {
 }
 
 export interface CliStatus {
+  platform: NodeJS.Platform;
   path?: string;
   source: "configured" | "chatgpt" | "PATH" | "missing";
   configuredPath?: string;

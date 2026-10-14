@@ -32,23 +32,32 @@ export function findCliOnPath(): string | undefined {
 }
 
 export function findChatGptBundledCli(): string | undefined {
-  if (process.platform !== "win32") return undefined;
+  const layout = process.platform === "win32"
+    ? { prefix: "windows-", executable: "codex.exe", architectures: process.arch === "arm64" ? ["aarch64", "arm64"] : ["x86_64", "x64"] }
+    : process.platform === "linux"
+      ? { prefix: "linux-", executable: "codex", architectures: process.arch === "arm64" ? ["aarch64", "arm64"] : ["x86_64", "x64"] }
+      : undefined;
+  if (!layout) return undefined;
   const extensionPath = vscode.extensions.getExtension("openai.chatgpt")?.extensionPath;
   if (!extensionPath) return undefined;
 
   const binPath = join(extensionPath, "bin");
   try {
     const directories = readdirSync(binPath, { withFileTypes: true })
-      .filter(entry => entry.isDirectory() && entry.name.toLowerCase().startsWith("windows-"))
+      .filter(entry => entry.isDirectory() && entry.name.toLowerCase().startsWith(layout.prefix))
       .map(entry => entry.name);
-    const preferredArchitecture = process.arch === "arm64" ? "aarch64" : "x86_64";
     directories.sort((left, right) => {
-      const leftPreferred = left.toLowerCase().endsWith(preferredArchitecture);
-      const rightPreferred = right.toLowerCase().endsWith(preferredArchitecture);
-      return Number(rightPreferred) - Number(leftPreferred) || left.localeCompare(right);
+      const architectureRank = (directory: string) => {
+        const suffix = directory.slice(layout.prefix.length).toLowerCase();
+        const index = layout.architectures.indexOf(suffix);
+        return index < 0 ? layout.architectures.length : index;
+      };
+      return architectureRank(left) - architectureRank(right) || left.localeCompare(right);
     });
     for (const directory of directories) {
-      const candidate = join(binPath, directory, "codex.exe");
+      const suffix = directory.slice(layout.prefix.length).toLowerCase();
+      if (process.platform === "linux" && !layout.architectures.includes(suffix)) continue;
+      const candidate = join(binPath, directory, layout.executable);
       if (isRunnableFile(candidate)) return candidate;
     }
   } catch {

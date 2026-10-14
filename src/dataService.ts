@@ -375,5 +375,5 @@ export function shortError(error: unknown): string {
 export function formatThreadDeleteError(error: unknown, threadId: string): string {
   const message = shortError(error);
   if (!/already has an active writer/i.test(message)) return message;
-  return `无法删除本地 Codex 对话记录：线程 ${threadId} 仍被 Codex 客户端占用。请在正在打开此会话的 ChatGPT Windows、VS Code Codex 或 Codex CLI 中结束当前任务并关闭该会话，然后刷新列表再重试。App Server 会拒绝删除仍有活动写入锁的线程，以保护会话记录。`;
+  return `无法删除本地 Codex 对话记录：线程 ${threadId} 仍被 Codex 客户端占用。请在正在打开此会话的 ChatGPT 桌面应用、VS Code Codex 或 Codex CLI 中结束当前任务并关闭该会话，然后刷新列表再重试。App Server 会拒绝删除仍有活动写入锁的线程，以保护会话记录。`;
 }

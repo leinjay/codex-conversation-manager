@@ -9,6 +9,14 @@
 
 ## Change log
 
+### 2026-10-14 — 0.2.25: Add Linux CLI discovery and session routing
+
+- Updated `src/cli.ts` to discover the current-architecture CLI bundled with the installed ChatGPT/Codex VS Code extension on Linux (`bin/linux-*/codex`), while retaining Windows discovery and PATH/configured-path precedence. The Linux platform package is present in the local VS Code extension installation at `bin/linux-x86_64/codex`.
+- Updated `src/extension.ts`, `src/types.ts`, and `src/view.ts` so Linux local-session buttons open through the Codex VS Code extension instead of a ChatGPT desktop deep link; generalized CLI path and URI error guidance. Updated active-writer guidance in `src/dataService.ts`.
+- Updated `AGENT.md` and `README.md` to state Windows/Linux support and the platform-specific CLI/session-opening behavior. Bumped `package.json` and `package-lock.json` to 0.2.25.
+- Initial shell lookup found no `node` or `npm`; downloaded Node.js 22.23.3 into `/tmp` from nodejs.org and verified its SHA-256 checksum. `npm ci` succeeded (118 packages installed, 0 vulnerabilities), `npm run compile` passed, and `npm run package -- --out '/home/winnie/下载/vsix/codex-conversation-manager-0.2.25.vsix'` succeeded with VSCE's existing missing-LICENSE warning. `git diff --check` passed. Automated regression checks and live CLI smoke checks were not run.
+- Installed `/home/winnie/下载/vsix/codex-conversation-manager-0.2.25.vsix` through VS Code CLI and confirmed `sponge.codex-conversation-manager@0.2.25`. Reload an open VS Code window to activate the new version.
+
 ### 2026-10-12 — 0.2.24: Show the expiration of each reset credit
 
 - Updated `src/dataService.ts` and `src/types.ts` to normalize the expiry timestamp for each reset credit whose service status is `available`. Epoch-second and ISO timestamps use the existing timestamp normalization; missing expiry fields remain unavailable instead of being inferred from the aggregate count.

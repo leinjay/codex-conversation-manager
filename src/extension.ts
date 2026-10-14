@@ -63,6 +63,7 @@ function makeCliStatus(): CliStatus {
     : undefined;
   const currentVerification = path && verification?.path.toLowerCase() === path.toLowerCase() ? verification : undefined;
   return {
+    platform: process.platform,
     path,
     source: target?.source ?? "missing",
     configuredPath,
@@ -146,7 +147,7 @@ async function verifyCli(showResult: boolean): Promise<boolean> {
     emitState();
     await manager?.refresh();
     if (showResult) {
-      const action = await vscode.window.showWarningMessage("未检测到 Codex CLI。请选择 Codex CLI 的 codex.exe、codex.cmd 或启动程序。", "配置路径");
+      const action = await vscode.window.showWarningMessage("未检测到 Codex CLI。请选择 Codex CLI 启动程序。", "配置路径");
       if (action) await vscode.commands.executeCommand("sponge.codex.configureCliPath");
     }
     return false;
@@ -230,7 +231,7 @@ async function detectCli(): Promise<void> {
   } else if (detected) {
     await vscode.window.showInformationMessage(`已从 PATH 检测到 Codex CLI：${detected}`);
   } else {
-    const action = await vscode.window.showWarningMessage("未找到可用的 Codex App Server CLI。请安装 ChatGPT/Codex VS Code 扩展、将 Codex CLI 加入 PATH，或手动选择 codex.exe / codex.cmd。", "配置路径");
+    const action = await vscode.window.showWarningMessage("未找到可用的 Codex App Server CLI。请安装 ChatGPT/Codex VS Code 扩展、将 Codex CLI（通常名为 codex）加入 PATH，或手动选择 CLI 启动程序。", "配置路径");
     if (action) await configureCliPath();
   }
 }
@@ -315,9 +316,13 @@ async function handleWebviewMessage(message: Record<string, unknown>, webview: v
 async function openRecord(record: SessionRecord): Promise<void> {
   if (record.source === "local") {
     if (!record.id) throw new Error("此本地对话没有有效的 thread ID。");
+    if (process.platform === "linux") {
+      await openRecordInIde(record);
+      return;
+    }
     const uri = vscode.Uri.parse(`codex://threads/${encodeURIComponent(record.id)}`);
     const opened = await vscode.env.openExternal(uri);
-    if (!opened) throw new Error("系统未能打开 codex:// 深链。请确认已安装并注册 ChatGPT Windows 应用，且该对话对当前用户可见。");
+    if (!opened) throw new Error("系统未能打开 codex:// 深链。请确认已安装并注册 Codex 桌面应用，且该对话对当前用户可见。");
     return;
   }
   if (!record.url) throw new Error("Codex Cloud 列表没有提供此任务的打开链接；未使用云端 ID 构造本地深链。");
