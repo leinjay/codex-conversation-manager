@@ -1,0 +1,146 @@
+{
+  "name": "codex-conversation-manager",
+  "displayName": "Codex Conversation Manager",
+  "description": "Browse local Codex conversations and Codex Cloud tasks from the Codex view container.",
+  "version": "0.2.24",
+  "publisher": "sponge",
+  "engines": {
+    "vscode": "^1.110.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "extensionDependencies": [
+    "openai.chatgpt"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:sponge.sessions",
+    "onView:sponge.sessions.legacy",
+    "onCommand:sponge.sessions.open"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "views": {
+      "codexSecondaryViewContainer": [
+        {
+          "id": "sponge.sessions",
+          "name": "Codex 对话管理器",
+          "type": "webview",
+          "when": "sponge.codex.secondaryContainer"
+        }
+      ],
+      "codexViewContainer": [
+        {
+          "id": "sponge.sessions.legacy",
+          "name": "Codex 对话管理器",
+          "type": "webview",
+          "when": "sponge.codex.legacyContainer"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sponge.sessions.open",
+        "title": "打开 Codex 对话管理器",
+        "category": "Sponge"
+      },
+      {
+        "command": "sponge.sessions.refresh",
+        "title": "刷新 Codex 对话",
+        "category": "Sponge",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sponge.codex.detectCli",
+        "title": "检测 Codex CLI",
+        "category": "Sponge"
+      },
+      {
+        "command": "sponge.codex.configureCliPath",
+        "title": "配置 Codex CLI 路径",
+        "category": "Sponge"
+      },
+      {
+        "command": "sponge.codex.verifyCli",
+        "title": "验证 Codex CLI",
+        "category": "Sponge"
+      },
+      {
+        "command": "sponge.codex.clearCliPath",
+        "title": "清除 Codex CLI 路径覆盖",
+        "category": "Sponge"
+      },
+      {
+        "command": "sponge.sessions.filterSource",
+        "title": "筛选对话来源",
+        "category": "Sponge"
+      },
+      {
+        "command": "sponge.sessions.filterProject",
+        "title": "筛选对话项目",
+        "category": "Sponge"
+      },
+      {
+        "command": "sponge.sessions.sort",
+        "title": "排序对话",
+        "category": "Sponge"
+      },
+      {
+        "command": "sponge.sessions.usage",
+        "title": "查看 Codex 账户用量",
+        "category": "Sponge"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "sponge.sessions.refresh",
+          "when": "view == sponge.sessions || view == sponge.sessions.legacy",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sponge.sessions",
+        "contents": "Codex 会话管理器。\n[打开管理器](command:sponge.sessions.open) · [配置 Codex CLI](command:sponge.codex.configureCliPath)"
+      },
+      {
+        "view": "sponge.sessions.legacy",
+        "contents": "Codex 会话管理器。\n[打开管理器](command:sponge.sessions.open) · [配置 Codex CLI](command:sponge.codex.configureCliPath)"
+      }
+    ],
+    "configuration": {
+      "title": "Codex Conversation Manager",
+      "properties": {
+        "sponge.codexCliPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Codex CLI 启动程序路径。留空时优先使用已安装的 ChatGPT/Codex VS Code 扩展随附 App Server CLI，其次从 PATH 检测。此设置保存在本机用户级配置中，不会写入工作区。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "check:webview": "node scripts/check-webview-script.cjs",
+    "check:quota-status-and-links": "npm run compile && node scripts/check-quota-status-and-links.cjs",
+    "check:reset-credits": "npm run compile && node scripts/check-reset-credits.cjs",
+    "check:cli-discovery": "npm run compile && node scripts/check-cli-discovery.cjs",
+    "check:sessions": "npm run compile && node scripts/check-session-manager.cjs",
+    "smoke:cli": "npm run compile && node scripts/smoke-cli-shim.cjs",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.110.0",
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^5.9.0"
+  }
+}

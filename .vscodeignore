@@ -1,0 +1,12 @@
+.vscode/**
+src/**
+scripts/**
+AGENT.md
+.gitignore
+error.log
+*.log
+node_modules/@types/**
+node_modules/typescript/**
+node_modules/@vscode/test-electron/**
+tsconfig.json
+*.vsix
