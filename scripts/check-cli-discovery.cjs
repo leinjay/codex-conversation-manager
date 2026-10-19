@@ -27,28 +27,36 @@ function writeFile(file) {
 function main() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "sponge-cli-discovery-"));
   const previousPath = process.env.PATH;
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
   try {
-    extensionPath = path.join(temp, "chatgpt-extension");
-    const bundledCli = path.join(extensionPath, "bin", "windows-x86_64", "codex.exe");
-    const pathCli = path.join(temp, "path", "codex.exe");
-    const configuredCli = path.join(temp, "configured", "codex.exe");
-    writeFile(bundledCli);
-    writeFile(pathCli);
-    writeFile(configuredCli);
-    process.env.PATH = path.dirname(pathCli);
+    for (const platform of ["win32", "linux"]) {
+      Object.defineProperty(process, "platform", { ...platformDescriptor, value: platform });
+      configuredPath = "";
+      extensionPath = path.join(temp, platform, "chatgpt-extension");
+      const executable = platform === "win32" ? "codex.exe" : "codex";
+      const architecture = process.arch === "arm64" ? "aarch64" : "x86_64";
+      const bundledCli = path.join(extensionPath, "bin", `${platform === "win32" ? "windows" : "linux"}-${architecture}`, executable);
+      const pathCli = path.join(temp, platform, "path", executable);
+      const configuredCli = path.join(temp, platform, "configured", executable);
+      writeFile(bundledCli);
+      writeFile(pathCli);
+      writeFile(configuredCli);
+      process.env.PATH = path.dirname(pathCli);
 
-    assert.equal(findChatGptBundledCli(), bundledCli, "The ChatGPT extension's bundled Windows CLI was not discovered.");
-    assert.deepEqual(resolveCliTarget(), { path: bundledCli, source: "chatgpt" }, "The bundled ChatGPT CLI should take precedence over PATH.");
+      assert.equal(findChatGptBundledCli(), bundledCli, `The ChatGPT extension's bundled ${platform} CLI was not discovered.`);
+      assert.deepEqual(resolveCliTarget(), { path: bundledCli, source: "chatgpt" }, "The bundled ChatGPT CLI should take precedence over PATH.");
 
-    configuredPath = configuredCli;
-    assert.deepEqual(resolveCliTarget(), { path: configuredCli, source: "configured" }, "An explicit user path should take precedence over automatic discovery.");
+      configuredPath = configuredCli;
+      assert.deepEqual(resolveCliTarget(), { path: configuredCli, source: "configured" }, "An explicit user path should take precedence over automatic discovery.");
 
-    configuredPath = "";
-    extensionPath = undefined;
-    assert.deepEqual(resolveCliTarget(), { path: pathCli, source: "PATH" }, "PATH should be used when the bundled CLI is unavailable.");
+      configuredPath = "";
+      extensionPath = undefined;
+      assert.deepEqual(resolveCliTarget(), { path: pathCli, source: "PATH" }, "PATH should be used when the bundled CLI is unavailable.");
+    }
 
-    process.stdout.write(JSON.stringify({ bundledDefault: true, configuredOverride: true, pathFallback: true }) + "\n");
+    process.stdout.write(JSON.stringify({ platforms: ["win32", "linux"], bundledDefault: true, configuredOverride: true, pathFallback: true }) + "\n");
   } finally {
+    Object.defineProperty(process, "platform", platformDescriptor);
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
     fs.rmSync(temp, { recursive: true, force: true });

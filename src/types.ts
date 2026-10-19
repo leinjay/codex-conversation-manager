@@ -115,11 +115,20 @@ export interface SavedAccount {
 }
 
 export interface AccountSnapshot {
-  items: SavedAccount[];
+  items: Array<SavedAccount & { quota?: AccountQuotaSnapshot }>;
+  currentId?: string;
+  currentQuota?: AccountQuotaSnapshot;
+  refreshingQuotas?: boolean;
   busy: boolean;
   canCancel: boolean;
   currentEmail?: string;
   targetEmail?: string;
   phase: "unverified" | "reloadRequired" | "confirmationRequired" | "confirmed";
   message?: string;
+}
+
+export interface AccountQuotaSnapshot {
+  status: "loading" | "available" | "unavailable" | "error" | "reauth";
+  text?: string;
+  checkedAt?: number;
 }

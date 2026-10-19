@@ -1,7 +1,15 @@
 const assert = require("node:assert/strict");
 const { buildQuotaStatusBarContent } = require("../dist/quotaStatusBar.js");
 const { formatManagerViewTitle } = require("../dist/quotaStatusBar.js");
+const { formatAccountQuota } = require("../dist/quotaStatusBar.js");
 const { codexIdeThreadUri } = require("../dist/links.js");
+
+const accountNow = new Date(2026, 9, 19, 17, 0).getTime();
+assert.equal(formatAccountQuota([{ key: 'codex', label: 'Codex',
+  primary: { usedPercent: 52, resetsAt: new Date(2026, 9, 19, 21, 15).getTime() },
+  secondary: { usedPercent: 25, resetsAt: new Date(2026, 9, 25, 9, 43).getTime() }
+}], accountNow), '5h Left 48% (21:15) · Wk Left 75% (09:43+6d)');
+assert.equal(formatAccountQuota([], accountNow), '5h Left -- (--) · Wk Left -- (--)');
 
 const unavailable = buildQuotaStatusBarContent();
 assert.match(unavailable.text, /Codex 用量/);

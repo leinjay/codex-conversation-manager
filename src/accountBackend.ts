@@ -2,6 +2,8 @@ import { AppServerSession } from "./appServer";
 import type { AccountBackend, AccountIdentity } from "./accounts";
 import { AccountAuthenticationError, AccountEnvironmentError } from "./accounts";
 import type { CliTarget } from "./cli";
+import { normalizeQuotaBuckets } from "./quota";
+import type { UsageBucket } from "./types";
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -9,8 +11,36 @@ function record(value: unknown): Record<string, unknown> {
 
 class AuthFlowError extends Error {}
 
+function authenticationFailure(error: unknown): boolean {
+  return error instanceof Error && /401|unauthori[sz]ed|invalid.grant|refresh.token.*(?:expired|revoked|reused)|token.*has expired/i.test(error.message);
+}
+
 export class CodexAccountBackend implements AccountBackend {
   constructor(private readonly target: () => CliTarget | undefined, private readonly openAuth: (url: string) => Promise<void>) {}
+
+  async readQuota(home: string): Promise<{ identity: AccountIdentity; buckets: UsageBucket[] }> {
+    const session = this.session(home, true);
+    try {
+      await session.connect();
+      let identity = await this.readFrom(session, false);
+      if (!identity.email) throw new AccountAuthenticationError("保存的登录已失效。");
+      let raw: Record<string, unknown>;
+      try { raw = await session.request<Record<string, unknown>>("account/rateLimits/read"); }
+      catch (error) {
+        if (!authenticationFailure(error)) throw error;
+        // Renew an expired access token once before treating the saved login as invalid.
+        identity = await this.readFrom(session, true);
+        if (!identity.email) throw new AccountAuthenticationError("保存的登录已失效。");
+        raw = await session.request<Record<string, unknown>>("account/rateLimits/read");
+      }
+      return { identity, buckets: normalizeQuotaBuckets(raw) };
+    } catch (error) {
+      if (error instanceof AccountAuthenticationError || authenticationFailure(error)) {
+        throw new AccountAuthenticationError("保存的 ChatGPT 登录已失效，需要重新授权。");
+      }
+      throw new Error("账户额度读取失败，请稍后刷新重试。");
+    } finally { await this.close(session); }
+  }
 
   async read(home: string, refresh: boolean, isolated: boolean): Promise<AccountIdentity> {
     const session = this.session(home, isolated);
@@ -18,7 +48,7 @@ export class CodexAccountBackend implements AccountBackend {
       await session.connect();
       return await this.readFrom(session, refresh);
     } catch (error) {
-      if (error instanceof Error && /401|unauthori[sz]ed|invalid.grant|refresh.token.*(?:expired|revoked|reused)|token.*has expired/i.test(error.message)) {
+      if (authenticationFailure(error)) {
         throw new AccountAuthenticationError("保存的 ChatGPT 登录已失效，需要重新授权。");
       }
       if (error instanceof Error && error.message.startsWith("当前")) throw error;

@@ -63,6 +63,16 @@ function resetTime(value: number | undefined, now: number): string {
   return `${clockTime(date)}${suffix}`;
 }
 
+export function formatAccountQuota(buckets: UsageBucket[], now = Date.now()): string {
+  const windows = quotaWindows(buckets);
+  const summary = (kind: QuotaWindow["kind"], label: string): string => {
+    const window = windows.filter(item => item.kind === kind)
+      .sort((left, right) => left.remainingPercent - right.remainingPercent)[0];
+    return `${label} ${window ? `${window.remainingPercent}%` : "--"} (${resetTime(window?.resetsAt, now)})`;
+  };
+  return `${summary("primary", "5h Left")} · ${summary("secondary", "Wk Left")}`;
+}
+
 function managerAccountTitle(usage?: UsageSnapshot): string {
   let account = "读取中";
   if (usage) {

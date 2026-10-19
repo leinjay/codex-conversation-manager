@@ -31,6 +31,15 @@ async function fixture(run) {
     store: 'file',
     onRefresh: undefined,
     waitForCancel: false,
+    quotaCalls: [],
+    quotaMismatch: false,
+    async readQuota(directory) {
+      assert.notEqual(directory, home, 'Saved quota requests must use an isolated home.');
+      this.quotaCalls.push(directory);
+      const identity = await this.read(directory, true, true);
+      if (this.quotaMismatch) identity.email = 'wrong@example.com';
+      return { identity, buckets: [{ key: 'codex', label: 'Codex', primary: { usedPercent: 52 }, secondary: { usedPercent: 25 } }] };
+    },
     async read(directory, refresh, isolated) {
       let raw;
       try { raw = JSON.parse(await fs.readFile(path.join(directory, 'auth.json'), 'utf8')); }
@@ -70,6 +79,55 @@ async function fixture(run) {
 
 async function main() {
   await checkProtocol();
+  await fixture(async f => {
+    await f.manager.saveCurrent();
+    await f.manager.add();
+    const original = await f.active();
+    const a = f.manager.snapshot().items.find(item => item.email === 'a@example.com');
+    const b = f.manager.snapshot().items.find(item => item.email === 'b@example.com');
+    f.manager.observeUsage({ accountStatus: 'available', email: a.email, quotaStatus: 'available',
+      buckets: [{ key: 'codex', label: 'Codex', primary: { usedPercent: 10 } }], tokenStatus: 'unavailable' });
+    await f.manager.refreshQuotas();
+    assert.equal(await f.active(), original, 'Quota reads must leave the active login byte-for-byte unchanged.');
+    assert.equal(f.backend.quotaCalls.length, 1, 'Reuse live usage for the active account.');
+    let state = f.manager.snapshot();
+    assert.equal(state.currentId, a.id);
+    assert.match(state.items.find(item => item.id === a.id).quota.text, /5h Left 90%/);
+    assert.match(state.items.find(item => item.id === b.id).quota.text, /5h Left 48%.*Wk Left 75%/);
+    assert.match(await f.secrets.get(`sponge.accounts.${b.id}`), /synthetic-rotated/);
+    assert.doesNotMatch(JSON.stringify(state), /synthetic-access|synthetic-refresh|tokens/);
+    assert.doesNotMatch(await fs.readFile(path.join(f.storage, 'accounts', 'index.json'), 'utf8'), /quota|synthetic-access|synthetic-refresh/);
+    f.backend.failAfterRotation = true;
+    const previous = await f.secrets.get(`sponge.accounts.${b.id}`);
+    await f.manager.refreshQuotas();
+    assert.equal(f.manager.snapshot().items.find(item => item.id === b.id).quota.status, 'error');
+    assert.notEqual(await f.secrets.get(`sponge.accounts.${b.id}`), previous, 'Preserve rotation even if the quota request later fails.');
+    f.backend.failAfterRotation = false;
+    f.backend.failRefresh = true;
+    await f.manager.refreshQuotas();
+    assert.equal(f.manager.snapshot().items.find(item => item.id === b.id).quota.status, 'reauth');
+    f.backend.failRefresh = false;
+    f.backend.quotaMismatch = true;
+    await f.manager.refreshQuotas();
+    assert.equal(f.manager.snapshot().items.find(item => item.id === b.id).quota.status, 'error', 'Never show another account quota under this email.');
+    f.backend.quotaMismatch = false;
+    await f.manager.refreshQuotas();
+    assert.equal(f.manager.snapshot().items.find(item => item.id === b.id).state, 'saved');
+    let release;
+    f.backend.onRefresh = () => new Promise(resolve => { release = resolve; });
+    const pending = f.manager.refreshQuotas();
+    assert.equal(f.manager.refreshQuotas(), pending, 'Concurrent quota refreshes share one request.');
+    for (let i = 0; !release && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 2));
+    assert.equal(typeof release, 'function');
+    assert.equal(f.manager.snapshot().busy, false, 'Background quota reads must not disable conversation actions.');
+    const removing = f.manager.remove(b.id);
+    assert.equal(f.manager.snapshot().items.length, 2, 'An account operation waits for the isolated quota process to finish.');
+    release();
+    await Promise.all([pending, removing]);
+    assert.equal(f.manager.snapshot().items.length, 1);
+    assert.equal(await f.active(), original);
+    assert.deepEqual((await fs.readdir(path.join(f.storage, 'accounts'))).filter(name => name.startsWith('login-')), []);
+  });
   await fixture(async f => {
     const original = await f.active();
     await f.manager.saveCurrent();
@@ -286,19 +344,31 @@ async function checkProtocol() {
   let stopped = 0;
   let cancelled = 0;
   let opened = 0;
+  let quotaRequests = 0;
+  const accountReadFlags = [];
   let releaseClose;
   class FakeSession {
     constructor(_target, supplied) { options = supplied; }
     async connect() {}
     onNotification(listener) { this.listener = listener; return () => { this.listener = undefined; }; }
-    async request(method) {
+    async request(method, params) {
       if (method === 'account/login/start') {
         if (mode === 'success') this.listener('account/login/completed', { success: true, loginId: 'login-test' });
         return { loginId: 'login-test', authUrl: mode === 'badUrl' ? 'https://example.invalid/authorize' : 'https://auth.openai.com/authorize' };
       }
       if (method === 'account/login/cancel') { cancelled++; return {}; }
-      if (method === 'account/read') return { account: { type: 'chatgpt', email: 'synthetic@example.com' } };
+      if (method === 'account/read') {
+        accountReadFlags.push(params?.refreshToken);
+        return { account: { type: 'chatgpt', email: 'synthetic@example.com' } };
+      }
       if (method === 'config/read') return { config: { cli_auth_credentials_store: 'file' } };
+      if (method === 'account/rateLimits/read') {
+        quotaRequests++;
+        if (mode === 'quotaRetry' && quotaRequests === 1) throw new Error('401 Unauthorized');
+        if (mode === 'quotaAuth') throw new Error('401 Unauthorized');
+        if (mode === 'quotaNetwork') throw new Error('Synthetic network timeout');
+        return { rateLimits: { limitId: 'codex', primary: { usedPercent: 52, resetsAt: 1800000000 }, secondary: { usedPercent: 25 } } };
+      }
       throw new Error('Unexpected protocol method');
     }
     async stopAndWait() {
@@ -339,6 +409,25 @@ async function checkProtocol() {
   assert.equal((await read).email, 'synthetic@example.com');
   mode = 'closeFailure';
   await assert.rejects(backend.read('isolated-home', false, true), AccountEnvironmentError);
+  mode = 'success';
+  const quota = await backend.readQuota('isolated-quota-home');
+  assert.equal(quota.identity.email, 'synthetic@example.com');
+  assert.equal(quota.buckets[0].primary.usedPercent, 52);
+  assert.equal(quota.buckets[0].primary.resetsAt, 1800000000000);
+  assert.equal(options.env.CODEX_HOME, 'isolated-quota-home');
+  assert.deepEqual(options.config, ['cli_auth_credentials_store="file"']);
+  mode = 'quotaRetry';
+  quotaRequests = 0;
+  accountReadFlags.length = 0;
+  assert.equal((await backend.readQuota('isolated-home')).buckets[0].primary.usedPercent, 52);
+  assert.equal(quotaRequests, 2);
+  assert.deepEqual(accountReadFlags, [false, true], 'Renew expired access tokens once before asking for browser authorization.');
+  mode = 'quotaAuth';
+  await assert.rejects(backend.readQuota('isolated-home'), AccountAuthenticationError);
+  mode = 'quotaNetwork';
+  await assert.rejects(backend.readQuota('isolated-home'), /额度读取失败/);
+  mode = 'closeFailure';
+  await assert.rejects(backend.readQuota('isolated-home'), AccountEnvironmentError);
 }
 
 main().catch(error => { process.stderr.write(error.stack + '\n'); process.exitCode = 1; });

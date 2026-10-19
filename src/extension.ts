@@ -47,6 +47,17 @@ function ensureLocalAccountSwitch(): void {
   }
 }
 
+function refreshSavedAccountQuotas(): Promise<void> {
+  try { ensureLocalAccountSwitch(); }
+  catch { return Promise.resolve(); }
+  return accounts?.refreshQuotas() ?? Promise.resolve();
+}
+
+async function refreshAllUsage(): Promise<void> {
+  await manager?.refreshUsage();
+  await refreshSavedAccountQuotas();
+}
+
 async function pickAccount(): Promise<void> {
   if (!accounts) throw new Error("账户管理尚未初始化，请稍候。");
   await accounts.refreshIndex();
@@ -95,7 +106,7 @@ async function pickAccount(): Promise<void> {
       }
     }
   }
-  await manager?.refreshUsage();
+  await refreshAllUsage();
   void webviews?.sendAllStates();
 }
 
@@ -310,7 +321,7 @@ async function handleWebviewMessage(message: Record<string, unknown>, webview: v
     const text = shortError(error);
     void webview.postMessage({ type: "message", text, error: true });
     void vscode.window.showErrorMessage(text);
-    if (type === "accounts") void manager?.refreshUsage();
+    if (type === "accounts" || type === "switchAccount") void manager?.refreshUsage();
   };
   try {
     if (type === "ready") {
@@ -318,12 +329,21 @@ async function handleWebviewMessage(message: Record<string, unknown>, webview: v
       await webview.postMessage({ type: "selectTab", tab: activeTabRequest });
     } else if (type === "accounts") {
       await pickAccount();
+    } else if (type === "switchAccount") {
+      ensureLocalAccountSwitch();
+      const item = accounts?.snapshot().items.find(item => item.id === message.id);
+      if (!item) throw new Error("账户已移除或不存在，请刷新后重试。");
+      const choice = await vscode.window.showWarningMessage(`切换到“${item.email}”并重载当前窗口？请先结束 Codex 正在执行的任务。`, { modal: true }, "切换并重载");
+      if (choice === "切换并重载" && await accounts!.switchTo(item.id)) {
+        await vscode.commands.executeCommand("workbench.action.reloadWindow");
+      }
     } else if (accounts?.snapshot().busy) {
       throw new Error("正在处理账户操作，请完成或取消后再操作会话。");
     } else if (type === "refresh") {
-      void manager.refresh();
+      await manager.refresh();
+      await refreshSavedAccountQuotas();
     } else if (type === "refreshUsage") {
-      void manager.refreshUsage();
+      await refreshAllUsage();
     } else if (type === "search") {
       void manager.setSearch(typeof message.value === "string" ? message.value : "");
     } else if (type === "source") {
@@ -454,10 +474,13 @@ export function activate(context: vscode.ExtensionContext): void {
   quotaStatusBar.show();
   context.subscriptions.push(quotaStatusBar);
 
-  const usageRefreshTimer = setInterval(() => { if (!accounts?.snapshot().busy) void manager?.refreshUsage(); }, 5 * 60_000);
+  const usageRefreshTimer = setInterval(() => { if (!accounts?.snapshot().busy) void refreshAllUsage(); }, 5 * 60_000);
   context.subscriptions.push({ dispose: () => clearInterval(usageRefreshTimer) });
   // Recompute calendar-day reset suffixes even when the next account request fails.
-  const titleRefreshTimer = setInterval(() => { if (manager) updateQuotaStatusBar(manager.snapshot()); }, 60_000);
+  const titleRefreshTimer = setInterval(() => {
+    if (manager) updateQuotaStatusBar(manager.snapshot());
+    void webviews?.sendAllStates();
+  }, 60_000);
   context.subscriptions.push({ dispose: () => clearInterval(titleRefreshTimer) });
 
   const sessionListRefreshTimer = startSessionListAutoRefresh(
@@ -533,6 +556,7 @@ export function activate(context: vscode.ExtensionContext): void {
     } catch (error) {
       await vscode.window.showErrorMessage(shortError(error));
     }
+    void refreshSavedAccountQuotas();
   })().catch(error => { void vscode.window.showErrorMessage(shortError(error)); });
 }
 

@@ -22,6 +22,10 @@ VS Code extension for Windows and Linux that browses local Codex conversations a
 
 Use the account icon beside the manager's refresh icon, or the compact account line below its heading. This entry is available on every tab and opens a searchable native menu. Choose **保存当前账户** to keep the current login, **添加其他账户…** to authorize another account once in the official browser flow, or an email to switch. Adding an account leaves the current login intact; login can be cancelled. Removing a saved copy preserves the active login and conversation history.
 
+All saved accounts appear directly below this entry, together with the current account even when it has not been saved. Each row shows the full email and a compact quota summary such as `5h Left 48% (21:15) · Wk Left 75% (09:43+6d)`. The current CLI account has an arrow and larger white text; other accounts are gray. Rows wrap in narrow sidebars. Clicking another account asks for confirmation before switching and reloading. The marker identifies the CLI account; the existing Codex IDE confirmation status remains separate.
+
+The list refreshes at startup, manually, and every five minutes. Current-account usage is reused; other saved accounts are queried through dedicated App Server processes in isolated temporary homes. Refreshed credentials are preserved in SecretStorage even if a later quota request fails, and the active login is not replaced. Background reads share the account operation lock; a requested account operation takes priority after the current isolated read and cleanup finish. Quota data remains in memory, hover text shows its last update, and reset-day suffixes update every minute from cached data. Missing, failed, loading, and expired-authorization states are explicit.
+
 Switching validates the selected account, preserves renewed credentials, applies the official login cache, and reloads the current VS Code window. Finish running Codex tasks first; other clients sharing that Codex Home also need to reload. After reload the CLI account is checked again. The Codex extension does not expose its in-memory account to other extensions, so the UI says **CLI 已核验，Codex 待确认** until you use **核对 Codex 实际账户…**, enter the email actually shown in the Codex profile menu, and it matches the selected account and CLI. A CLI check alone is never labeled an automatic IDE verification.
 
 Saved copies use VS Code SecretStorage; only account metadata is stored as ordinary local extension data. Temporary authorization files are restricted to the local user and cleaned up after the dedicated App Server process exits, with bounded retries for Windows file locks. Local process-exit or cleanup failures are reported separately from network and expired-login errors, preserving saved credentials and leaving the active login unchanged. This version supports ChatGPT file-based login on local Windows/Linux. Keyring/ephemeral storage, API keys or external auth environment variables, and WSL/remote IDE environments are not switched automatically. Invalid authorization or an unavailable network leaves the current account in place and offers reauthorization/retry. The extension does not change the official credential-store setting.
@@ -39,7 +43,7 @@ The account-management feature reads and restores the official file login cache 
     npm install
     npm run compile
     npm run package
-    code --install-extension ./codex-conversation-manager-0.2.29.vsix --force
+    code --install-extension ./codex-conversation-manager-0.2.30.vsix --force
 
 Open the Codex view container and choose **Codex 对话管理器**. If the Codex container cannot be detected, run **Sponge: 打开 Codex 对话管理器** from the Command Palette.
 

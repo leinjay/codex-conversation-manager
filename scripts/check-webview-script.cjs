@@ -24,6 +24,32 @@ renderAccountMenu({ accounts: { currentEmail: "<account@example.com>", phase: "c
 assert.equal(accountButton.textContent, "<account@example.com> · 已核对 ▾", "Account labels should be assigned as text, not interpreted as HTML.");
 renderAccountMenu({ accounts: { busy: true, canCancel: true } }, () => accountButton);
 assert.equal(accountButton.textContent, "账户 · 授权中，可取消 ▾");
+assert.ok(html.indexOf('id="accountMenu"') < html.indexOf('id="accountList"') && html.indexOf('id="accountList"') < html.indexOf('<nav class="tabs"'), 'All accounts belong below the switch entry, outside the tabs.');
+const accountListSource = scriptMatch[1].match(/    function renderAccountList\(\) \{[\s\S]*?\n    \}/);
+assert.ok(accountListSource);
+const accountList = { innerHTML: '' };
+const escapeAccountText = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+const renderAccountList = new Function('snapshot', '$', 'escapeHtml', 'formatDate', accountListSource[0] + '\nrenderAccountList();');
+const renderAccounts = accounts => {
+  renderAccountList({ accounts }, () => accountList, escapeAccountText, () => 'checked');
+  return accountList.innerHTML;
+};
+const accountRows = renderAccounts({ currentId: 'a', currentEmail: 'a@example.com', items: [
+  { id: 'a', email: 'a@example.com', quota: { status: 'available', text: '5h Left 48% (21:15) · Wk Left 75% (09:43+6d)' } },
+  { id: 'b', email: '<img src=x onerror=alert(1)>', quota: { status: 'error' } }
+] });
+assert.equal((accountRows.match(/aria-current="true"/g) || []).length, 1);
+assert.equal((accountRows.match(/▶/g) || []).length, 1);
+assert.match(accountRows, /class="account-row current"[^>]*disabled/);
+assert.match(accountRows, /5h Left 48% \(21:15\) · Wk Left 75% \(09:43\+6d\)/);
+assert.doesNotMatch(accountRows, /<img/);
+assert.match(accountRows, /&lt;img/);
+assert.match(accountRows, /额度读取失败/);
+assert.match(html, /\.account-row\.current \{ color: #fff; font-size: 14px;/);
+assert.match(html, /\.account-row \{[^}]*color: #999; font-size: 12px;/);
+assert.match(renderAccounts({ currentEmail: 'unsaved@example.com', currentQuota: { status: 'unavailable' }, items: [] }), /unsaved@example.com.*服务未提供额度/);
+assert.match(renderAccounts({ items: [{ id: 'b', email: 'b@example.com', quota: { status: 'reauth' } }] }), /需重新授权/);
+assert.doesNotMatch(accountList.innerHTML, /0%|aria-current="true"/);
 new vm.Script(scriptMatch[1], { filename: "codex-manager-webview.js" });
 assert.match(scriptMatch[1], /5小时剩余/);
 assert.match(scriptMatch[1], /周剩余/);

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppServerSession } from "./appServer";
+import { normalizeQuotaBuckets } from "./quota";
 import { runCli, type CliTarget } from "./cli";
 import type { CloudPage, LocalPage, SessionRecord, UsageBucket, UsageResetCredit, UsageSnapshot } from "./types";
 
@@ -91,16 +92,6 @@ function normalizeCloudTask(input: unknown): SessionRecord | undefined {
     environmentId,
     environmentLabel,
     raw
-  };
-}
-
-function optionalBucketWindow(value: unknown): UsageBucket["primary"] {
-  const raw = asRecord(value);
-  if (!Object.keys(raw).length) return undefined;
-  return {
-    usedPercent: numberValue(raw.usedPercent),
-    windowDurationMins: numberValue(raw.windowDurationMins),
-    resetsAt: timestamp(raw.resetsAt)
   };
 }
 
@@ -295,17 +286,7 @@ export class CodexDataService {
       const resetCreditData = asRecord(raw.rateLimitResetCredits);
       availableResetCount = countValue(resetCreditData.availableCount);
       resetCredits = normalizeResetCredits(resetCreditData.credits);
-      const byId = asRecord(raw.rateLimitsByLimitId);
-      const source = Object.keys(byId).length ? byId : raw.rateLimits ? { [stringValue(asRecord(raw.rateLimits).limitId) ?? "codex"]: raw.rateLimits } : {};
-      buckets = Object.entries(source).map(([key, item]) => {
-        const bucket = asRecord(item);
-        return {
-          key,
-          label: stringValue(bucket.limitName) ?? stringValue(bucket.limitId) ?? key,
-          primary: optionalBucketWindow(bucket.primary),
-          secondary: optionalBucketWindow(bucket.secondary)
-        };
-      });
+      buckets = normalizeQuotaBuckets(raw);
       if (buckets.length) {
         quotaStatus = "available";
         quotaMessage = undefined;

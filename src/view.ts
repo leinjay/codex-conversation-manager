@@ -108,6 +108,14 @@ function getHtml(nonce: string, cspSource: string): string {
     .header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .header-main { min-width: 0; flex: 1; }
     .account-button { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; border: 0; font-size: 11px; line-height: 16px; background: transparent; color: var(--vscode-descriptionForeground); text-align: left; }
+    .account-list { display: grid; gap: 3px; margin-top: 8px; }
+    .account-row { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 5px 6px; border: 0; background: transparent; color: #999; font-size: 12px; text-align: left; }
+    .account-row.current { color: #fff; font-size: 14px; font-weight: 600; background: #292929; }
+    .account-row:disabled { opacity: 1; cursor: default; }
+    .account-indicator { flex: 0 0 12px; }
+    .account-row-content { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; min-width: 0; }
+    .account-email { overflow-wrap: anywhere; }
+    .account-quota { font-variant-numeric: tabular-nums; }
     .tabs { display: flex; gap: 3px; border-bottom: 1px solid var(--vscode-panel-border); margin: 12px -2px 12px; }
     button, select, input { font: inherit; color: inherit; }
     button { border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border-radius: 3px; padding: 4px 8px; cursor: pointer; }
@@ -203,6 +211,7 @@ function getHtml(nonce: string, cspSource: string): string {
 </head>
 <body>
   <div class="header"><div class="header-main"><h1>Codex 对话管理器</h1><button id="accountMenu" class="account-button" type="button" aria-haspopup="dialog" aria-label="选择或管理 Codex 账户" title="添加、保存或切换 Codex 账户">账户 ▾</button></div><button id="refresh" title="刷新会话和用量">刷新</button></div>
+  <section id="accountList" class="account-list" aria-label="所有 Codex 账户"></section>
   <div id="notices"></div>
   <nav class="tabs" aria-label="管理器页面">
     <button class="tab active" data-tab="sessions">对话</button>
@@ -532,6 +541,7 @@ function getHtml(nonce: string, cspSource: string): string {
     }
     function renderState() {
       renderAccountMenu();
+      renderAccountList();
       renderNotices();
       renderSessions();
       renderUsage();
@@ -548,6 +558,31 @@ function getHtml(nonce: string, cspSource: string): string {
       button.textContent = email + ' · ' + status + ' ▾';
       button.title = email + ' · ' + (state?.message || '保存当前账户、添加账户或切换；切换会重载当前窗口。');
       button.setAttribute('aria-label', '管理 Codex 账户：' + email + '，' + status);
+    }
+    function renderAccountList() {
+      const state = snapshot.accounts;
+      const rows = [...(state?.items || [])];
+      if (state?.currentEmail && !state.currentId) {
+        rows.unshift({ id: '', email: state.currentEmail, quota: state.currentQuota });
+      }
+      const quotaLabel = (quota, row) => quota?.status === 'available' ? quota.text || '服务未提供额度'
+        : quota?.status === 'reauth' || (!quota && row.state === 'reauth') ? '需重新授权'
+        : quota?.status === 'loading' || (!quota && state?.refreshingQuotas) ? '额度读取中…'
+        : quota?.status === 'error' ? '额度读取失败，点击刷新重试'
+        : quota?.status === 'unavailable' ? '服务未提供额度' : '额度尚未读取';
+      $('#accountList').innerHTML = rows.length ? rows.map(row => {
+        const current = row.id ? row.id === state?.currentId : true;
+        const quota = quotaLabel(row.quota, row);
+        const title = row.email + ' · ' + quota
+          + (row.quota?.checkedAt ? ' · 上次更新：' + formatDate(row.quota.checkedAt) : '')
+          + (current ? ' · 当前 CLI 账户' : ' · 切换会重载窗口，请先结束正在执行的任务');
+        return '<button type="button" class="account-row' + (current ? ' current' : '') + '"'
+          + (current ? ' aria-current="true"' : '')
+          + ' data-switch-account="' + escapeHtml(row.id) + '" title="' + escapeHtml(title) + '"'
+          + (current || state?.busy ? ' disabled' : '') + '><span class="account-indicator" aria-hidden="true">'
+          + (current ? '▶' : '') + '</span><span class="account-row-content"><span class="account-email">'
+          + escapeHtml(row.email) + '</span><span class="account-quota">' + escapeHtml(quota) + '</span></span></button>';
+      }).join('') : '<div class="small-note">尚未保存账户；点击上方账户入口保存或添加。</div>';
     }
     function questionExcerpt(text, query) {
       const compact = String(text || '').replace(/\\s+/g, ' ').trim();
@@ -743,6 +778,10 @@ function getHtml(nonce: string, cspSource: string): string {
     document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
     $('#refresh').addEventListener('click', () => send('refresh'));
     $('#accountMenu').addEventListener('click', () => send('accounts'));
+    $('#accountList').addEventListener('click', event => {
+      const row = event.target.closest('button[data-switch-account]');
+      if (row && !row.disabled && row.dataset.switchAccount) send('switchAccount', { id: row.dataset.switchAccount });
+    });
     $('#search').addEventListener('input', event => {
       clearTimeout(searchTimer);
       const value = event.target.value;

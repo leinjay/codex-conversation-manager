@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { join, resolve, dirname, sep } from "node:path";
-import type { AccountSnapshot, SavedAccount, UsageSnapshot } from "./types";
+import type { AccountQuotaSnapshot, AccountSnapshot, SavedAccount, UsageBucket, UsageSnapshot } from "./types";
+import { formatAccountQuota } from "./quotaStatusBar";
 
 interface Secrets {
   get(key: string): PromiseLike<string | undefined>;
@@ -18,6 +19,7 @@ export interface AccountIdentity {
 export interface AccountBackend {
   read(home: string, refresh: boolean, isolated: boolean): Promise<AccountIdentity>;
   login(home: string, signal: AbortSignal): Promise<AccountIdentity>;
+  readQuota?(home: string): Promise<{ identity: AccountIdentity; buckets: UsageBucket[] }>;
 }
 
 export class AccountAuthenticationError extends Error {}
@@ -92,6 +94,14 @@ async function atomicWrite(file: string, content: string): Promise<void> {
 export class AccountManager {
   private index: AccountIndex = { version: 1, items: [] };
   private currentEmail?: string;
+  private currentAccountId?: string;
+  private currentUsage?: UsageSnapshot;
+  private currentUsageAt?: number;
+  private quotas = new Map<string, { status: AccountQuotaSnapshot["status"]; buckets: UsageBucket[]; checkedAt?: number }>();
+  private quotaRefresh?: Promise<void>;
+  private refreshingQuotas = false;
+  private stopQuotaRefresh = false;
+  private disposed = false;
   private busy = false;
   private message?: string;
   private loginAbort?: AbortController;
@@ -118,6 +128,9 @@ export class AccountManager {
   async refreshIndex(): Promise<void> { if (!this.busy) { await this.loadIndex(); this.changed(); } }
 
   observeUsage(usage?: UsageSnapshot): void {
+    if (this.currentUsage !== usage) this.currentUsageAt = usage ? Date.now() : undefined;
+    this.currentUsage = usage;
+    if (this.currentEmail !== usage?.email) this.currentAccountId = undefined;
     this.currentEmail = usage?.accountStatus === "available" ? usage.email : undefined;
     if (this.currentEmail && this.index.pending && emailKey(this.currentEmail) !== emailKey(this.index.pending.email)) {
       this.verifiedSwitch = undefined;
@@ -128,9 +141,26 @@ export class AccountManager {
 
   snapshot(): AccountSnapshot {
     const pending = this.index.pending;
+    const currentId = this.index.items.find(item => emailKey(item.email) === emailKey(this.currentEmail ?? "")
+      && (!this.currentAccountId || item.accountId === this.currentAccountId))?.id;
+    const currentQuota: AccountQuotaSnapshot | undefined = this.currentUsage
+      && emailKey(this.currentUsage.email ?? "") === emailKey(this.currentEmail ?? "") ? {
+      status: this.currentUsage.quotaStatus,
+      text: this.currentUsage.quotaStatus === "available" ? formatAccountQuota(this.currentUsage.buckets) : undefined,
+      checkedAt: this.currentUsageAt
+    } : undefined;
     return {
-      items: this.index.items.map(item => ({ ...item })),
-      busy: this.busy,
+      items: this.index.items.map(item => {
+        const quota = this.quotas.get(item.id);
+        return { ...item, quota: item.id === currentId ? currentQuota : quota ? {
+          status: quota.status, checkedAt: quota.checkedAt,
+          text: quota.status === "available" ? formatAccountQuota(quota.buckets) : undefined
+        } : undefined };
+      }),
+      currentId,
+      currentQuota,
+      refreshingQuotas: this.refreshingQuotas,
+      busy: this.busy && !this.refreshingQuotas,
       canCancel: Boolean(this.loginAbort),
       currentEmail: this.currentEmail,
       targetEmail: pending?.email,
@@ -143,7 +173,65 @@ export class AccountManager {
   }
 
   cancelLogin(): void { this.loginAbort?.abort(); }
-  dispose(): void { this.cancelLogin(); }
+  dispose(): void { this.disposed = true; this.cancelLogin(); }
+
+  refreshQuotas(): Promise<void> {
+    if (this.quotaRefresh) return this.quotaRefresh;
+    if (this.busy || this.disposed || !this.backend.readQuota) return Promise.resolve();
+    this.stopQuotaRefresh = false;
+    this.refreshingQuotas = true;
+    this.quotaRefresh = this.exclusive(async () => {
+      const active = await optionalCredentials(this.home);
+      this.currentAccountId = active?.accountId;
+      for (const item of this.index.items) {
+        if (this.disposed || this.stopQuotaRefresh) break;
+        if (item.accountId === active?.accountId && emailKey(item.email) === emailKey(this.currentEmail ?? "")) continue;
+        this.quotas.set(item.id, { status: "loading", buckets: [] });
+        this.changed();
+        try {
+          const encoded = await this.secrets.get(secretKey(item.id));
+          if (!encoded) throw new AccountAuthenticationError("保存的登录不可用。");
+          const saved = credentials(encoded);
+          if (saved.accountId !== item.accountId) throw new Error("账户标识不一致。");
+          const result = await this.withTemporaryHome(async home => {
+            await atomicWrite(join(home, "auth.json"), saved.content);
+            try {
+              const result = await this.backend.readQuota!(home);
+              const updated = await readCredentials(home);
+              if (emailKey(result.identity.email) !== emailKey(item.email) || updated.accountId !== item.accountId) {
+                throw new Error("额度返回的账户标识不一致。");
+              }
+              return result;
+            } finally {
+              // Quota requests can renew credentials even when a later request fails.
+              const rotated = await optionalCredentials(home).catch(() => undefined);
+              if (rotated?.accountId === saved.accountId && rotated.hash !== saved.hash) {
+                await this.secrets.store(secretKey(item.id), rotated.content);
+              }
+            }
+          });
+          this.quotas.set(item.id, { status: result.buckets.length ? "available" : "unavailable", buckets: result.buckets, checkedAt: Date.now() });
+          if (item.state !== "saved") { item.state = "saved"; await this.writeIndex(); }
+        } catch (error) {
+          const reauth = error instanceof AccountAuthenticationError;
+          this.quotas.set(item.id, { status: reauth ? "reauth" : "error", buckets: [], checkedAt: Date.now() });
+          if (reauth && item.state !== "reauth") { item.state = "reauth"; await this.writeIndex(); }
+        }
+        this.changed();
+      }
+    }, true).catch(() => {
+      for (const item of this.index.items) {
+        if (!this.quotas.has(item.id) || this.quotas.get(item.id)?.status === "loading") {
+          this.quotas.set(item.id, { status: "error", buckets: [], checkedAt: Date.now() });
+        }
+      }
+    }).finally(() => {
+      this.refreshingQuotas = false;
+      this.quotaRefresh = undefined;
+      this.changed();
+    });
+    return this.quotaRefresh;
+  }
 
   async saveCurrent(): Promise<void> {
     await this.exclusive(async () => {
@@ -152,6 +240,7 @@ export class AccountManager {
       const cache = await readCredentials(this.home);
       await this.save(identity, cache);
       this.currentEmail = identity.email;
+      this.currentAccountId = cache.accountId;
       this.message = "当前账户已保存；之后可从账户菜单切换。";
     });
   }
@@ -185,6 +274,7 @@ export class AccountManager {
       // Only the encrypted saved copy is removed. The active CLI login is not logged out.
       await this.secrets.delete(secretKey(item.id));
       this.index.items = this.index.items.filter(account => account.id !== id);
+      this.quotas.delete(id);
       if (this.index.pending?.id === id) this.index.pending = undefined;
       await this.writeIndex();
       this.message = "已移除此账户的保存副本，当前登录和本地会话未删除。";
@@ -264,6 +354,7 @@ export class AccountManager {
         throw new Error("切换后的账户核验失败；请刷新并检查当前账户。未覆盖其他客户端随后写入的登录状态。");
       }
       this.currentEmail = item.email;
+      this.currentAccountId = candidate.accountId;
       this.message = "CLI 账户已核验，需重载当前窗口，让 Codex 采用新的登录状态。其他 Codex 窗口也需重载。";
       return true;
     });
@@ -287,6 +378,7 @@ export class AccountManager {
       // Keep the newest official cache, never restore an old refresh token after a restart.
       await this.secrets.store(secretKey(item.id), cache.content);
       this.currentEmail = actual.email;
+      this.currentAccountId = cache.accountId;
       this.verifiedSwitch = pending.nonce;
       if (pending.phase === "reloadRequired") pending.phase = "confirmationRequired";
       await this.writeIndex();
@@ -363,7 +455,11 @@ export class AccountManager {
     }
   }
 
-  private async exclusive<T>(run: () => Promise<T>): Promise<T> {
+  private async exclusive<T>(run: () => Promise<T>, background = false): Promise<T> {
+    if (!background && this.quotaRefresh) {
+      this.stopQuotaRefresh = true;
+      await this.quotaRefresh;
+    }
     if (this.busy) throw new Error("正在处理账户操作，请稍候；浏览器登录可从账户菜单取消。");
     this.busy = true;
     this.changed();
@@ -391,7 +487,7 @@ export class AccountManager {
       await this.loadIndex();
       return await run();
     } catch (error) {
-      this.message = error instanceof Error ? error.message : "账户操作未完成，请重试。";
+      if (!background) this.message = error instanceof Error ? error.message : "账户操作未完成，请重试。";
       throw error;
     } finally {
       if (lock) { await lock.close(); await fs.unlink(lockPath).catch(() => {}); }
