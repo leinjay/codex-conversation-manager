@@ -24,6 +24,8 @@ export interface AccountBackend {
 
 export class AccountAuthenticationError extends Error {}
 export class AccountEnvironmentError extends Error {}
+export class AccountStorageError extends Error {}
+export class AccountCacheMissingError extends AccountStorageError {}
 
 interface PendingSwitch {
   nonce: string;
@@ -189,9 +191,7 @@ export class AccountManager {
         this.quotas.set(item.id, { status: "loading", buckets: [] });
         this.changed();
         try {
-          const encoded = await this.secrets.get(secretKey(item.id));
-          if (!encoded) throw new AccountAuthenticationError("保存的登录不可用。");
-          const saved = credentials(encoded);
+          const saved = await this.loadSaved(item);
           if (saved.accountId !== item.accountId) throw new Error("账户标识不一致。");
           const result = await this.withTemporaryHome(async home => {
             await atomicWrite(join(home, "auth.json"), saved.content);
@@ -206,7 +206,7 @@ export class AccountManager {
               // Quota requests can renew credentials even when a later request fails.
               const rotated = await optionalCredentials(home).catch(() => undefined);
               if (rotated?.accountId === saved.accountId && rotated.hash !== saved.hash) {
-                await this.secrets.store(secretKey(item.id), rotated.content);
+                await this.storeSaved(item.id, rotated.content);
               }
             }
           });
@@ -214,7 +214,7 @@ export class AccountManager {
           if (item.state !== "saved") { item.state = "saved"; await this.writeIndex(); }
         } catch (error) {
           const reauth = error instanceof AccountAuthenticationError;
-          this.quotas.set(item.id, { status: reauth ? "reauth" : "error", buckets: [], checkedAt: Date.now() });
+          this.quotas.set(item.id, { status: error instanceof AccountCacheMissingError ? "cacheMissing" : reauth ? "reauth" : "error", buckets: [], checkedAt: Date.now() });
           if (reauth && item.state !== "reauth") { item.state = "reauth"; await this.writeIndex(); }
         }
         this.changed();
@@ -284,19 +284,18 @@ export class AccountManager {
   async switchTo(id: string): Promise<boolean> {
     return this.exclusive(async () => {
       const item = this.find(id);
-      const encoded = await this.secrets.get(secretKey(item.id));
-      if (!encoded) throw new Error("此账户的加密登录缓存已不可用，请重新添加账户。只显示邮箱的列表不能用于登录。");
-      const saved = credentials(encoded);
       const previousIdentity = await this.backend.read(this.home, false, false);
       this.requireFileStore(previousIdentity, false);
       const previous = await optionalCredentials(this.home);
-      if (emailKey(previousIdentity.email) === emailKey(item.email) && previous?.accountId === saved.accountId) {
+      if (emailKey(previousIdentity.email) === emailKey(item.email) && previous?.accountId === item.accountId) {
         await this.save(previousIdentity, previous);
         this.currentEmail = previousIdentity.email;
-        this.message = "当前已是此账户；如需确认 Codex，请使用账户菜单中的核对操作。";
+        this.currentAccountId = previous.accountId;
+        this.message = "当前已是此账户，已重新保存当前有效登录副本；如需确认 Codex，请使用账户菜单中的核对操作。";
         return false;
       }
       if (previous && previousIdentity.email) await this.save(previousIdentity, previous);
+      const saved = await this.loadSaved(item);
       let candidate: Credentials;
       try {
         candidate = await this.withTemporaryHome(async home => {
@@ -307,7 +306,7 @@ export class AccountManager {
             // A concurrent config/read failure can follow a successful token rotation.
             const rotated = await optionalCredentials(home).catch(() => undefined);
             if (rotated?.accountId === saved.accountId && rotated.hash !== saved.hash) {
-              await this.secrets.store(secretKey(item.id), rotated.content);
+              await this.storeSaved(item.id, rotated.content);
             }
             throw error;
           }
@@ -317,13 +316,13 @@ export class AccountManager {
             throw new Error("登录状态返回的账户与选中的账户不一致。");
           }
           // Preserve rotated refresh tokens before making any change to the active login.
-          await this.secrets.store(secretKey(item.id), refreshed.content);
+          await this.storeSaved(item.id, refreshed.content);
           item.state = "saved";
           await this.writeIndex();
           return refreshed;
         });
       } catch (error) {
-        if (error instanceof AccountEnvironmentError) throw error;
+        if (error instanceof AccountEnvironmentError || error instanceof AccountStorageError) throw error;
         if (error instanceof AccountAuthenticationError) {
           item.state = "reauth";
           await this.writeIndex();
@@ -367,16 +366,16 @@ export class AccountManager {
       if (pending.nonce !== this.bootSwitch) throw new Error("请先重载当前窗口，再核验 Codex 账户。");
       if (resolve(pending.home) !== resolve(this.home)) throw new Error("当前 Codex Home 与切换账户时不同，无法核验；请检查 CLI / 环境。");
       const item = this.find(pending.id);
-      const stored = await this.secrets.get(secretKey(item.id));
       const actual = await this.backend.read(this.home, false, false);
       const cache = await readCredentials(this.home);
-      if (!stored || emailKey(actual.email) !== emailKey(item.email) || credentials(stored).accountId !== cache.accountId) {
+      if (emailKey(actual.email) !== emailKey(item.email) || item.accountId !== cache.accountId) {
         this.index.pending = undefined;
         await this.writeIndex();
         throw new Error("账户核验不一致：当前 CLI 登录与选中账户不同，请从账户菜单重新选择。");
       }
       // Keep the newest official cache, never restore an old refresh token after a restart.
-      await this.secrets.store(secretKey(item.id), cache.content);
+      await this.storeSaved(item.id, cache.content);
+      item.state = "saved";
       this.currentEmail = actual.email;
       this.currentAccountId = cache.accountId;
       this.verifiedSwitch = pending.nonce;
@@ -418,11 +417,35 @@ export class AccountManager {
     if (!item) {
       item = { id: randomUUID(), email: identity.email.trim(), accountId: cache.accountId, state: "saved", planType: identity.planType };
     }
-    await this.secrets.store(secretKey(item.id), cache.content);
+    await this.storeSaved(item.id, cache.content);
     if (!this.index.items.some(account => account.id === item!.id)) this.index.items.push(item);
     item.state = "saved";
     item.planType = identity.planType;
     await this.writeIndex();
+  }
+
+  private async loadSaved(item: SavedAccount): Promise<Credentials> {
+    let encoded: string | undefined;
+    try { encoded = await this.secrets.get(secretKey(item.id)); }
+    catch {
+      throw new AccountStorageError("无法访问 VS Code 加密存储。请解锁系统密钥环并完全退出所有 VS Code 进程后重新启动，再重试；这不表示账户授权已失效。");
+    }
+    if (!encoded) {
+      item.state = "cacheMissing";
+      await this.writeIndex();
+      throw new AccountCacheMissingError("此账户只有邮箱记录，加密登录副本未能读取。请先解锁系统密钥环并完全退出所有 VS Code 进程后重新启动（仅重载窗口不够）。当前仍登录的账户可点“保存当前账户”恢复；其他账户在存储恢复后重试，仍缺失时需重新添加一次。");
+    }
+    try { return credentials(encoded); }
+    catch { throw new AccountStorageError("此账户保存的登录副本格式无效。当前仍登录的账户可重新保存；其他账户需要重新添加，未改变当前登录。"); }
+  }
+
+  private async storeSaved(id: string, content: string): Promise<void> {
+    try {
+      await this.secrets.store(secretKey(id), content);
+      if (await this.secrets.get(secretKey(id)) !== content) throw new Error();
+    } catch {
+      throw new AccountStorageError("VS Code 加密存储写入或回读失败，未确认保存成功。请解锁系统密钥环，完全退出所有 VS Code 进程后重新启动并重试。");
+    }
   }
 
   private async loadIndex(): Promise<void> {

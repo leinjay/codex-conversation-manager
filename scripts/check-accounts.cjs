@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { AccountManager, AccountAuthenticationError, AccountEnvironmentError } = require('../dist/accounts.js');
+const { AccountManager, AccountAuthenticationError, AccountEnvironmentError, AccountStorageError, AccountCacheMissingError } = require('../dist/accounts.js');
 
 const cache = (email, accountId, revision = 0) => JSON.stringify({
   auth_mode: 'chatgpt', testEmail: email,
@@ -79,6 +79,47 @@ async function fixture(run) {
 
 async function main() {
   await checkProtocol();
+  await fixture(async f => {
+    await f.manager.saveCurrent();
+    await f.manager.add();
+    const original = await f.active();
+    const a = f.manager.snapshot().items.find(item => item.email === 'a@example.com');
+    const b = f.manager.snapshot().items.find(item => item.email === 'b@example.com');
+    f.vault.delete(`sponge.accounts.${a.id}`);
+    assert.equal(await f.manager.switchTo(a.id), false, 'A missing copy of the already active account can be rebuilt without OAuth.');
+    assert.equal(await f.secrets.get(`sponge.accounts.${a.id}`), original);
+    f.vault.delete(`sponge.accounts.${b.id}`);
+    await assert.rejects(f.manager.switchTo(b.id), AccountCacheMissingError);
+    assert.equal(await f.active(), original);
+    assert.equal(f.manager.snapshot().items.find(item => item.id === b.id).state, 'cacheMissing');
+    f.manager.observeUsage({ accountStatus: 'available', email: a.email, quotaStatus: 'unavailable', buckets: [], tokenStatus: 'unavailable' });
+    await f.manager.refreshQuotas();
+    assert.equal(f.manager.snapshot().items.find(item => item.id === b.id).quota.status, 'cacheMissing', 'Missing storage is not expired authorization.');
+    assert.equal(f.backend.quotaCalls.length, 0, 'Do not launch an App Server without a saved credential.');
+    // A transient keyring outage must not replace saved/expired-auth classification.
+    f.vault.set(`sponge.accounts.${b.id}`, cache(b.email, b.accountId));
+    const get = f.secrets.get;
+    f.secrets.get = async key => { if (key.endsWith(b.id)) throw new Error('Synthetic locked keyring'); return get(key); };
+    await assert.rejects(f.manager.switchTo(b.id), error => error instanceof AccountStorageError && /密钥环/.test(error.message));
+    assert.equal(await f.active(), original);
+    f.secrets.get = get;
+    await f.manager.refreshQuotas();
+    assert.equal(f.manager.snapshot().items.find(item => item.id === b.id).state, 'saved', 'Recovered storage must clear the missing-copy state.');
+    await f.manager.switchTo(b.id);
+    f.vault.delete(`sponge.accounts.${b.id}`);
+    const reloaded = f.create();
+    await reloaded.initialize();
+    await reloaded.verifyAfterReload();
+    assert.equal(reloaded.snapshot().phase, 'confirmationRequired', 'Rebuild a missing saved copy only after checking the active identity and account ID.');
+    assert.equal(await f.secrets.get(`sponge.accounts.${b.id}`), await f.active());
+  });
+  await fixture(async f => {
+    const original = await f.active();
+    f.secrets.store = async () => {};
+    await assert.rejects(f.manager.saveCurrent(), AccountStorageError);
+    assert.equal(f.manager.snapshot().items.length, 0, 'A silent write failure must not publish saved metadata.');
+    assert.equal(await f.active(), original);
+  });
   await fixture(async f => {
     await f.manager.saveCurrent();
     await f.manager.add();
@@ -283,7 +324,7 @@ async function main() {
     assert.equal(f.vault.size, 0);
     f.backend.store = 'file';
     f.secrets.store = async () => { throw new Error('Synthetic secure storage failure'); };
-    await assert.rejects(f.manager.saveCurrent(), /storage failure/);
+    await assert.rejects(f.manager.saveCurrent(), AccountStorageError);
     assert.equal(await f.active(), original);
     assert.equal(f.manager.snapshot().busy, false);
     assert.equal(f.manager.snapshot().items.length, 0, 'A secure-storage failure must not expose an unsaved account row.');

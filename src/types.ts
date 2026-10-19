@@ -111,7 +111,7 @@ export interface SavedAccount {
   email: string;
   accountId: string;
   planType?: string;
-  state: "saved" | "reauth";
+  state: "saved" | "reauth" | "cacheMissing";
 }
 
 export interface AccountSnapshot {
@@ -128,7 +128,7 @@ export interface AccountSnapshot {
 }
 
 export interface AccountQuotaSnapshot {
-  status: "loading" | "available" | "unavailable" | "error" | "reauth";
+  status: "loading" | "available" | "unavailable" | "error" | "reauth" | "cacheMissing";
   text?: string;
   checkedAt?: number;
 }

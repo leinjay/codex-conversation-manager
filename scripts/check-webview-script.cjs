@@ -49,6 +49,8 @@ assert.match(html, /\.account-row\.current \{ color: #fff; font-size: 14px;/);
 assert.match(html, /\.account-row \{[^}]*color: #999; font-size: 12px;/);
 assert.match(renderAccounts({ currentEmail: 'unsaved@example.com', currentQuota: { status: 'unavailable' }, items: [] }), /unsaved@example.com.*服务未提供额度/);
 assert.match(renderAccounts({ items: [{ id: 'b', email: 'b@example.com', quota: { status: 'reauth' } }] }), /需重新授权/);
+assert.match(renderAccounts({ items: [{ id: 'b', email: 'b@example.com', quota: { status: 'cacheMissing' } }] }), /加密副本未读取/);
+assert.doesNotMatch(accountList.innerHTML, /需重新授权/);
 assert.doesNotMatch(accountList.innerHTML, /0%|aria-current="true"/);
 new vm.Script(scriptMatch[1], { filename: "codex-manager-webview.js" });
 assert.match(scriptMatch[1], /5小时剩余/);

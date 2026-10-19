@@ -566,6 +566,7 @@ function getHtml(nonce: string, cspSource: string): string {
         rows.unshift({ id: '', email: state.currentEmail, quota: state.currentQuota });
       }
       const quotaLabel = (quota, row) => quota?.status === 'available' ? quota.text || '服务未提供额度'
+        : quota?.status === 'cacheMissing' || (!quota && row.state === 'cacheMissing') ? '加密副本未读取，请检查密钥环并重新保存'
         : quota?.status === 'reauth' || (!quota && row.state === 'reauth') ? '需重新授权'
         : quota?.status === 'loading' || (!quota && state?.refreshingQuotas) ? '额度读取中…'
         : quota?.status === 'error' ? '额度读取失败，点击刷新重试'

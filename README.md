@@ -30,6 +30,8 @@ Switching validates the selected account, preserves renewed credentials, applies
 
 Saved copies use VS Code SecretStorage; only account metadata is stored as ordinary local extension data. Temporary authorization files are restricted to the local user and cleaned up after the dedicated App Server process exits, with bounded retries for Windows file locks. Local process-exit or cleanup failures are reported separately from network and expired-login errors, preserving saved credentials and leaving the active login unchanged. This version supports ChatGPT file-based login on local Windows/Linux. Keyring/ephemeral storage, API keys or external auth environment variables, and WSL/remote IDE environments are not switched automatically. Invalid authorization or an unavailable network leaves the current account in place and offers reauthorization/retry. The extension does not change the official credential-store setting.
 
+If saved emails remain but their encrypted copies cannot be read, the list reports **加密副本未读取**, rather than treating the login as expired. VS Code can fall back to memory-only secret storage when Linux keyring encryption is unavailable; a successful save/read in one window does not prove persistence across restart. Unlock the keyring and **fully exit all VS Code processes**, then restart; reloading a window is insufficient. On Secret Service desktops, VS Code's runtime arguments (`~/.vscode/argv.json` for the default installation) can select `"password-store": "gnome-libsecret"`; this is a host setup step, not a Codex credential-store change. See [VS Code keyring configuration](https://code.visualstudio.com/docs/configure/settings-sync#_recommended-configure-the-keyring-to-use-with-vs-code). Save the currently logged-in account again to rebuild its copy without browser authorization. Missing copies of other accounts must be added again only if they remain unavailable after restoring secure storage. All credential writes are read back before claiming success; this checks the current session only. Switching to the already active account and post-reload verification can also recover its copy after checking both email and account ID.
+
 ## Requirements
 
 - VS Code
@@ -43,7 +45,7 @@ The account-management feature reads and restores the official file login cache 
     npm install
     npm run compile
     npm run package
-    code --install-extension ./codex-conversation-manager-0.2.30.vsix --force
+    code --install-extension ./codex-conversation-manager-0.2.31.vsix --force
 
 Open the Codex view container and choose **Codex 对话管理器**. If the Codex container cannot be detected, run **Sponge: 打开 Codex 对话管理器** from the Command Palette.
 

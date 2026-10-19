@@ -68,7 +68,7 @@ async function pickAccount(): Promise<void> {
     : [
       ...state.items.map(item => ({
         label: item.email,
-        description: [item.email.toLowerCase() === state.currentEmail?.toLowerCase() ? "当前邮箱" : "", item.planType ?? "", item.state === "reauth" ? "需重新授权" : "已保存"].filter(Boolean).join(" · "),
+        description: [item.email.toLowerCase() === state.currentEmail?.toLowerCase() ? "当前邮箱" : "", item.planType ?? "", item.state === "reauth" ? "需重新授权" : item.state === "cacheMissing" ? "加密副本未读取" : "已保存"].filter(Boolean).join(" · "),
         detail: "切换会重载当前 VS Code 窗口；请先结束 Codex 正在执行的任务。",
         action: "switch", id: item.id
       })),
