@@ -1,4 +1,8 @@
 import * as vscode from "vscode";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+import { AccountManager } from "./accounts";
+import { CodexAccountBackend } from "./accountBackend";
 import { startSessionListAutoRefresh } from "./autoRefresh";
 import { configuredCliPath, findChatGptBundledCli, findCliOnPath, resolveCliTarget, isRunnableFile } from "./cli";
 import { CodexDataService, shortError } from "./dataService";
@@ -31,6 +35,69 @@ let activeTabRequest = "sessions";
 let fallbackWarningShown = false;
 let lastUsageSnapshot: ManagerSnapshot["usage"];
 let usageRefreshedAt: number | undefined;
+let accounts: AccountManager | undefined;
+
+function managerSnapshot(): ManagerSnapshot {
+  return { ...(manager?.snapshot() ?? emptySnapshot()), accounts: accounts?.snapshot() };
+}
+
+function ensureLocalAccountSwitch(): void {
+  if (vscode.env.remoteName || vscode.workspace.getConfiguration("chatgpt").get<boolean>("runCodexInWindowsSubsystemForLinux", false)) {
+    throw new Error("账户切换目前支持本机 Windows / Linux。当前 Codex 可能使用 WSL 或远程登录环境，请先在对应环境中管理账户。");
+  }
+}
+
+async function pickAccount(): Promise<void> {
+  if (!accounts) throw new Error("账户管理尚未初始化，请稍候。");
+  await accounts.refreshIndex();
+  const state = accounts.snapshot();
+  type Choice = vscode.QuickPickItem & { action: string; id?: string };
+  const choices: Choice[] = state.busy
+    ? [{ label: state.canCancel ? "$(close) 取消添加账户" : "$(sync~spin) 正在处理账户…", action: state.canCancel ? "cancel" : "busy" }]
+    : [
+      ...state.items.map(item => ({
+        label: item.email,
+        description: [item.email.toLowerCase() === state.currentEmail?.toLowerCase() ? "当前邮箱" : "", item.planType ?? "", item.state === "reauth" ? "需重新授权" : "已保存"].filter(Boolean).join(" · "),
+        detail: "切换会重载当前 VS Code 窗口；请先结束 Codex 正在执行的任务。",
+        action: "switch", id: item.id
+      })),
+      { label: "$(save) 保存当前账户", action: "save" },
+      { label: "$(add) 添加其他账户…", description: "仅首次或登录失效时需要网页授权", action: "add" },
+      ...(state.phase === "reloadRequired" ? [{ label: "$(debug-restart) 重载窗口并核验 CLI 账户", action: "reload" }] : []),
+      ...(state.phase === "confirmationRequired" || state.phase === "confirmed" ? [{ label: "$(verified) 核对 Codex 实际账户…", description: "核对 Codex 个人菜单中显示的邮箱", action: "confirm" }] : []),
+      ...(state.items.length ? [{ label: "$(trash) 移除已保存账户…", description: "不会退出当前登录或删除会话", action: "remove" }] : [])
+    ];
+  const selected = await vscode.window.showQuickPick(choices, { title: "Codex 账户", placeHolder: state.message || "选择账户切换（会重载当前窗口），或添加、保存账户", matchOnDescription: true });
+  if (!selected || selected.action === "busy") return;
+  if (selected.action === "cancel") { accounts.cancelLogin(); return; }
+  if (selected.action === "reload") { await vscode.commands.executeCommand("workbench.action.reloadWindow"); return; }
+  if (selected.action === "confirm") {
+    await vscode.commands.executeCommand("chatgpt.openSidebar");
+    const email = await vscode.window.showInputBox({ title: "核对 Codex 实际账户", prompt: "打开 Codex 的个人菜单，输入其中实际显示的邮箱。不会读取你的密码。", placeHolder: "Codex 中显示的账户邮箱", ignoreFocusOut: true });
+    if (email !== undefined) await accounts.confirmIde(email);
+  } else if (selected.action === "remove") {
+    const item = await vscode.window.showQuickPick(state.items.map(account => ({ label: account.email, id: account.id })), { title: "移除已保存账户", placeHolder: "只移除加密保存副本，保留当前登录与会话" });
+    if (item && await vscode.window.showWarningMessage(`移除“${item.label}”的保存副本？之后再次使用它需要重新授权。`, { modal: true }, "移除") === "移除") await accounts.remove(item.id);
+  } else {
+    ensureLocalAccountSwitch();
+    if (selected.action === "save") await accounts.saveCurrent();
+    else if (selected.action === "add") {
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "添加 Codex 账户：请在浏览器中授权", cancellable: true }, async (_progress, token) => {
+        const abortController = new AbortController();
+        const cancel = token.onCancellationRequested(() => abortController.abort());
+        if (token.isCancellationRequested) abortController.abort();
+        try { await accounts!.add(abortController.signal); } finally { cancel.dispose(); }
+      });
+    } else if (selected.action === "switch" && selected.id) {
+      if (await accounts.switchTo(selected.id)) {
+        await vscode.commands.executeCommand("workbench.action.reloadWindow");
+        return;
+      }
+    }
+  }
+  await manager?.refreshUsage();
+  void webviews?.sendAllStates();
+}
 
 function detectContainers(): { viewId?: string; containerId?: string; mode: "secondary" | "legacy" | "missing" } {
   const extension = vscode.extensions.getExtension("openai.chatgpt");
@@ -243,11 +310,16 @@ async function handleWebviewMessage(message: Record<string, unknown>, webview: v
     const text = shortError(error);
     void webview.postMessage({ type: "message", text, error: true });
     void vscode.window.showErrorMessage(text);
+    if (type === "accounts") void manager?.refreshUsage();
   };
   try {
     if (type === "ready") {
       await webviews?.sendAllStates();
       await webview.postMessage({ type: "selectTab", tab: activeTabRequest });
+    } else if (type === "accounts") {
+      await pickAccount();
+    } else if (accounts?.snapshot().busy) {
+      throw new Error("正在处理账户操作，请完成或取消后再操作会话。");
     } else if (type === "refresh") {
       void manager.refresh();
     } else if (type === "refreshUsage") {
@@ -356,8 +428,20 @@ export function activate(context: vscode.ExtensionContext): void {
   void vscode.commands.executeCommand("setContext", "sponge.codex.legacyContainer", containers.mode === "legacy");
 
   dataService = new CodexDataService(resolveCliTarget);
-  webviews = new ManagerWebviewProvider(context.extensionUri, () => manager?.snapshot() ?? emptySnapshot(), handleWebviewMessage);
+  webviews = new ManagerWebviewProvider(context.extensionUri, managerSnapshot, handleWebviewMessage);
+  accounts = new AccountManager(
+    context.globalStorageUri.fsPath,
+    resolve(process.env.CODEX_HOME || join(homedir(), ".codex")),
+    context.secrets,
+    new CodexAccountBackend(resolveCliTarget, async url => {
+      if (!await vscode.env.openExternal(vscode.Uri.parse(url))) throw new Error("未能打开官方授权网页，请检查默认浏览器后重试。");
+    }),
+    () => { void webviews?.sendAllStates(); },
+    async () => { dataService?.dispose(); }
+  );
+  context.subscriptions.push(accounts);
   manager = new SessionManager(dataService, makeCliStatus, snapshot => {
+    accounts?.observeUsage(snapshot.usage);
     void webviews?.sendAllStates();
     updateQuotaStatusBar(snapshot);
   }, currentWorkspaceProjectPath());
@@ -370,11 +454,14 @@ export function activate(context: vscode.ExtensionContext): void {
   quotaStatusBar.show();
   context.subscriptions.push(quotaStatusBar);
 
-  const usageRefreshTimer = setInterval(() => { void manager?.refreshUsage(); }, 5 * 60_000);
+  const usageRefreshTimer = setInterval(() => { if (!accounts?.snapshot().busy) void manager?.refreshUsage(); }, 5 * 60_000);
   context.subscriptions.push({ dispose: () => clearInterval(usageRefreshTimer) });
+  // Recompute calendar-day reset suffixes even when the next account request fails.
+  const titleRefreshTimer = setInterval(() => { if (manager) updateQuotaStatusBar(manager.snapshot()); }, 60_000);
+  context.subscriptions.push({ dispose: () => clearInterval(titleRefreshTimer) });
 
   const sessionListRefreshTimer = startSessionListAutoRefresh(
-    () => manager?.refreshList() ?? Promise.resolve(),
+    () => accounts?.snapshot().busy ? Promise.resolve() : manager?.refreshList() ?? Promise.resolve(),
     error => console.error("Codex conversation list auto-refresh failed.", error)
   );
   context.subscriptions.push(sessionListRefreshTimer);
@@ -401,6 +488,10 @@ export function activate(context: vscode.ExtensionContext): void {
   addCommand("sponge.codex.verifyCli", () => verifyCli(true));
   addCommand("sponge.codex.clearCliPath", () => clearCliPath());
   addCommand("sponge.sessions.usage", () => openManager("usage"));
+  addCommand("sponge.accounts.pick", async () => {
+    try { await pickAccount(); }
+    catch (error) { await vscode.window.showErrorMessage(shortError(error)); await manager?.refreshUsage(); }
+  });
   addCommand("sponge.sessions.filterSource", async () => {
     const selected = await vscode.window.showQuickPick([
       { label: "全部", value: "all" }, { label: "本地", value: "local" }, { label: "云端", value: "cloud" }
@@ -431,10 +522,23 @@ export function activate(context: vscode.ExtensionContext): void {
   if (cliStatus.source !== "missing" && isRunnableFile(cliStatus.path!)) {
     verification = { path: cliStatus.path!, message: "CLI 已检测到；尚未完成版本和 App Server 验证。" };
   }
-  void manager.initialize();
+  void (async () => {
+    await accounts!.initialize().catch(async error => { await vscode.window.showErrorMessage(shortError(error)); });
+    await manager!.initialize();
+    try {
+      if (!vscode.env.remoteName && !vscode.workspace.getConfiguration("chatgpt").get<boolean>("runCodexInWindowsSubsystemForLinux", false)) {
+        await accounts!.verifyAfterReload();
+        void webviews?.sendAllStates();
+      }
+    } catch (error) {
+      await vscode.window.showErrorMessage(shortError(error));
+    }
+  })().catch(error => { void vscode.window.showErrorMessage(shortError(error)); });
 }
 
 export function deactivate(): void {
+  accounts?.dispose();
+  accounts = undefined;
   manager?.dispose();
   quotaStatusBar?.dispose();
   statusBar?.dispose();

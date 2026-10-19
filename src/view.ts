@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import type { ManagerSnapshot } from "./types";
-import { formatManagerViewTitle } from "./quotaStatusBar";
+import { buildQuotaStatusBarContent, formatManagerViewTitle } from "./quotaStatusBar";
 
 export interface WebviewMessageHandler {
   (message: Record<string, unknown>, webview: vscode.Webview): void | Promise<void>;
@@ -10,7 +10,7 @@ export interface WebviewMessageHandler {
 export class ManagerWebviewProvider implements vscode.WebviewViewProvider {
   private readonly webviews = new Set<vscode.Webview>();
   private readonly views = new Set<vscode.WebviewView>();
-  private quotaTitle = "Codex 对话管理器 · 配额读取中";
+  private quotaTitle = buildQuotaStatusBarContent().title;
   private listRefreshedAt?: number;
 
   constructor(
@@ -106,6 +106,8 @@ function getHtml(nonce: string, cspSource: string): string {
     .muted { color: var(--vscode-descriptionForeground); }
     .subtle { font-size: 11px; }
     .header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .header-main { min-width: 0; flex: 1; }
+    .account-button { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; border: 0; font-size: 11px; line-height: 16px; background: transparent; color: var(--vscode-descriptionForeground); text-align: left; }
     .tabs { display: flex; gap: 3px; border-bottom: 1px solid var(--vscode-panel-border); margin: 12px -2px 12px; }
     button, select, input { font: inherit; color: inherit; }
     button { border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border-radius: 3px; padding: 4px 8px; cursor: pointer; }
@@ -200,7 +202,7 @@ function getHtml(nonce: string, cspSource: string): string {
   </style>
 </head>
 <body>
-  <div class="header"><div><h1>Codex 对话管理器</h1><div class="muted subtle">本地会话与 Codex Cloud</div></div><button id="refresh" title="刷新会话和用量">刷新</button></div>
+  <div class="header"><div class="header-main"><h1>Codex 对话管理器</h1><button id="accountMenu" class="account-button" type="button" aria-haspopup="dialog" aria-label="选择或管理 Codex 账户" title="添加、保存或切换 Codex 账户">账户 ▾</button></div><button id="refresh" title="刷新会话和用量">刷新</button></div>
   <div id="notices"></div>
   <nav class="tabs" aria-label="管理器页面">
     <button class="tab active" data-tab="sessions">对话</button>
@@ -529,10 +531,23 @@ function getHtml(nonce: string, cspSource: string): string {
         + '<p class="small-note">本扩展通过本机 Codex CLI 启动 App Server，以 stdio JSONL 读取对话。若 VS Code 在 WSL 或远程主机运行，其 Codex Home 可能与本机桌面应用不同。</p></section>';
     }
     function renderState() {
+      renderAccountMenu();
       renderNotices();
       renderSessions();
       renderUsage();
       renderCli();
+    }
+    function renderAccountMenu() {
+      const state = snapshot.accounts;
+      const button = $('#accountMenu');
+      const email = state?.currentEmail || (snapshot.usage?.accountStatus === 'available' ? snapshot.usage.email : '') || '账户';
+      const status = state?.busy ? (state.canCancel ? '授权中，可取消' : '处理中')
+        : state?.phase === 'reloadRequired' ? '需重载 Codex'
+        : state?.phase === 'confirmationRequired' ? 'CLI 已核验，Codex 待确认'
+        : state?.phase === 'confirmed' ? '已核对' : '切换 / 管理';
+      button.textContent = email + ' · ' + status + ' ▾';
+      button.title = email + ' · ' + (state?.message || '保存当前账户、添加账户或切换；切换会重载当前窗口。');
+      button.setAttribute('aria-label', '管理 Codex 账户：' + email + '，' + status);
     }
     function questionExcerpt(text, query) {
       const compact = String(text || '').replace(/\\s+/g, ' ').trim();
@@ -727,6 +742,7 @@ function getHtml(nonce: string, cspSource: string): string {
     }
     document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => setTab(button.dataset.tab)));
     $('#refresh').addEventListener('click', () => send('refresh'));
+    $('#accountMenu').addEventListener('click', () => send('accounts'));
     $('#search').addEventListener('input', event => {
       clearTimeout(searchTimer);
       const value = event.target.value;

@@ -125,7 +125,7 @@ async function main() {
   managerRefreshCallback();
   await flushRefresh();
   assert.equal(lastEmittedRefreshTime, manager.snapshot().listRefreshedAt, "A scheduled list refresh should emit its completion time to the manager bar.");
-  assert.match(formatManagerViewTitle("Codex 对话管理器", lastEmittedRefreshTime), /列表刷新 \d+\/\d+ /);
+  assert.match(formatManagerViewTitle("Codex 对话管理器", lastEmittedRefreshTime), / · \[\d{2}:\d{2}\]$/);
   managerRefreshTimer.dispose();
   const duplicatePathRecords = [
     { ...makeRecord("local", 700), projectLabel: "D:\\code\\transformers" },

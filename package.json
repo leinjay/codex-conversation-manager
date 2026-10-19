@@ -2,7 +2,7 @@
   "name": "codex-conversation-manager",
   "displayName": "Codex Conversation Manager",
   "description": "Browse local Codex conversations and Codex Cloud tasks from the Codex view container.",
-  "version": "0.2.25",
+  "version": "0.2.29",
   "publisher": "sponge",
   "engines": {
     "vscode": "^1.110.0"
@@ -43,6 +43,12 @@
       ]
     },
     "commands": [
+      {
+        "command": "sponge.accounts.pick",
+        "title": "切换 / 管理 Codex 账户",
+        "category": "Sponge",
+        "icon": "$(account)"
+      },
       {
         "command": "sponge.sessions.open",
         "title": "打开 Codex 对话管理器",
@@ -98,6 +104,11 @@
     "menus": {
       "view/title": [
         {
+          "command": "sponge.accounts.pick",
+          "when": "view == sponge.sessions || view == sponge.sessions.legacy",
+          "group": "navigation@0"
+        },
+        {
           "command": "sponge.sessions.refresh",
           "when": "view == sponge.sessions || view == sponge.sessions.legacy",
           "group": "navigation@1"
@@ -133,6 +144,7 @@
     "check:quota-status-and-links": "npm run compile && node scripts/check-quota-status-and-links.cjs",
     "check:reset-credits": "npm run compile && node scripts/check-reset-credits.cjs",
     "check:cli-discovery": "npm run compile && node scripts/check-cli-discovery.cjs",
+    "check:accounts": "npm run compile && node scripts/check-accounts.cjs",
     "check:sessions": "npm run compile && node scripts/check-session-manager.cjs",
     "smoke:cli": "npm run compile && node scripts/smoke-cli-shim.cjs",
     "package": "vsce package --allow-missing-repository"

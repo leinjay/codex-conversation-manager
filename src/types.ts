@@ -85,6 +85,7 @@ export interface CliStatus {
 }
 
 export interface ManagerSnapshot {
+  accounts?: AccountSnapshot;
   records: SessionRecord[];
   projects: string[];
   sourceFilter: "all" | "local" | "cloud";
@@ -102,5 +103,23 @@ export interface ManagerSnapshot {
   listRefreshedAt?: number;
   cli: CliStatus;
   loading: boolean;
+  message?: string;
+}
+
+export interface SavedAccount {
+  id: string;
+  email: string;
+  accountId: string;
+  planType?: string;
+  state: "saved" | "reauth";
+}
+
+export interface AccountSnapshot {
+  items: SavedAccount[];
+  busy: boolean;
+  canCancel: boolean;
+  currentEmail?: string;
+  targetEmail?: string;
+  phase: "unverified" | "reloadRequired" | "confirmationRequired" | "confirmed";
   message?: string;
 }

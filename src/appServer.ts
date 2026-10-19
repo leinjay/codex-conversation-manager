@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { spawnAppServer } from "./cli";
+import { spawnAppServer, type AppServerProcessOptions } from "./cli";
 
 interface JsonRpcResponse {
   id?: number;
@@ -22,13 +22,16 @@ export class AppServerSession {
   private readonly pending = new Map<number, PendingRequest>();
   private stderr = "";
   private closed = false;
+  private childClosed = false;
+  private stopping?: Promise<void>;
   private initialized = false;
   private startupError?: Error;
+  private readonly notificationListeners = new Set<(method: string, params: unknown) => void>();
 
-  constructor(private readonly cliPath: string) {}
+  constructor(private readonly cliPath: string, private readonly options: AppServerProcessOptions = {}) {}
 
   async connect(): Promise<Record<string, unknown>> {
-    this.child = spawnAppServer(this.cliPath);
+    this.child = spawnAppServer(this.cliPath, this.options);
     this.child.stdout.setEncoding("utf8");
     this.child.stderr.setEncoding("utf8");
     this.child.stdout.on("data", (chunk: string) => this.acceptChunk(chunk));
@@ -40,6 +43,7 @@ export class AppServerSession {
       this.failAll(error);
     });
     this.child.once("close", code => {
+      this.childClosed = true;
       this.closed = true;
       const error = new Error(this.stderr.trim() || `Codex App Server 已退出（代码 ${code ?? "未知"}）`);
       this.startupError = error;
@@ -92,11 +96,37 @@ export class AppServerSession {
     return this.initialized && !this.closed;
   }
 
+  onNotification(listener: (method: string, params: unknown) => void): () => void {
+    this.notificationListeners.add(listener);
+    return () => this.notificationListeners.delete(listener);
+  }
+
   stop(): void {
     this.closed = true;
     this.initialized = false;
     this.failAll(new Error("Codex App Server 已关闭。"));
+    this.notificationListeners.clear();
     if (this.child && !this.child.killed) this.child.kill();
+  }
+
+  stopAndWait(timeoutMs = 5000): Promise<void> {
+    if (this.stopping) return this.stopping;
+    const child = this.child;
+    if (!child || this.childClosed) {
+      this.stop();
+      return Promise.resolve();
+    }
+    this.stopping = new Promise<void>((resolve, reject) => {
+      const onClose = () => { clearTimeout(timer); resolve(); };
+      const timer = setTimeout(() => {
+        child.removeListener("close", onClose);
+        reject(new Error("等待 Codex 账户校验进程退出超时。"));
+      }, timeoutMs);
+      // Register before kill: Windows releases SQLite handles only after process exit.
+      child.once("close", onClose);
+      this.stop();
+    });
+    return this.stopping;
   }
 
   private send(message: Record<string, unknown>): void {
@@ -118,7 +148,12 @@ export class AppServerSession {
       } catch {
         continue;
       }
-      if (message.id === undefined) continue;
+      if (message.id === undefined) {
+        if (message.method) {
+          for (const listener of this.notificationListeners) listener(message.method, message.params);
+        }
+        continue;
+      }
       const pending = this.pending.get(message.id);
       if (!pending) continue;
       this.pending.delete(message.id);

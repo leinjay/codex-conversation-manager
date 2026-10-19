@@ -7,13 +7,18 @@ export interface QuotaStatusBarContent {
 }
 
 export function formatManagerViewTitle(quotaTitle: string, listRefreshedAt?: number): string {
-  let time = "--";
-  if (typeof listRefreshedAt === "number" && Number.isFinite(listRefreshedAt)) {
-    const date = new Date(listRefreshedAt);
-    const clock = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-    time = `${date.getMonth() + 1}/${date.getDate()} ${clock}`;
-  }
-  return `${quotaTitle} · 列表刷新 ${time}`;
+  const date = validDate(listRefreshedAt);
+  return `${quotaTitle} · [${date ? clockTime(date) : "--:--"}]`;
+}
+
+function validDate(value?: number): Date | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function clockTime(date: Date): string {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 interface QuotaWindow {
@@ -47,20 +52,38 @@ function quotaWindows(buckets: UsageBucket[]): QuotaWindow[] {
   return result;
 }
 
-function resetTime(value?: number): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
-  const date = new Date(value);
-  const hour = String(date.getHours()).padStart(2, "0");
-  const minute = String(date.getMinutes()).padStart(2, "0");
-  return `${date.getMonth() + 1}/${date.getDate()} ${hour}:${minute}`;
+function resetTime(value: number | undefined, now: number): string {
+  const date = validDate(value);
+  const today = validDate(now);
+  if (!date || !today) return "--";
+  // Compare local calendar dates, not elapsed hours: a DST day can have 23 or 25 hours.
+  const calendarDay = (day: Date): number => Date.UTC(day.getFullYear(), day.getMonth(), day.getDate());
+  const days = Math.round((calendarDay(date) - calendarDay(today)) / 86_400_000);
+  const suffix = days === 0 ? "" : `${days > 0 ? "+" : ""}${days}d`;
+  return `${clockTime(date)}${suffix}`;
 }
 
-export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: number): QuotaStatusBarContent {
+function managerAccountTitle(usage?: UsageSnapshot): string {
+  let account = "读取中";
+  if (usage) {
+    account = usage.accountStatus === "available"
+      ? usage.email?.replace(/\s+/g, " ").trim() || "服务未提供"
+      : usage.accountStatus === "error" ? "读取失败" : "不可用";
+  }
+  if (usage?.accountStatus === "available" && usage.email?.trim()) {
+    const separator = account.lastIndexOf("@");
+    return `Codex 对话管理器 · ${separator > 0 ? account.slice(0, separator) : account}`;
+  }
+  return `Codex 对话管理器 · 账户 ${account}`;
+}
+
+export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: number, now = Date.now()): QuotaStatusBarContent {
+  const titlePrefix = managerAccountTitle(usage);
   if (!usage) {
     return {
       text: "$(sync~spin) Codex 用量",
       tooltip: "正在读取 Codex 配额。点击查看账户用量。",
-      title: "Codex 对话管理器 · 配额读取中"
+      title: `${titlePrefix} · 配额读取中`
     };
   }
   if (usage.quotaStatus !== "available") {
@@ -69,7 +92,7 @@ export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: 
     return {
       text: label,
       tooltip: `${usage.quotaMessage || "服务未提供配额数据。"}\n点击查看账户用量。`,
-      title: `Codex 对话管理器 · ${isError ? "配额错误" : "配额不可用"}`
+      title: `${titlePrefix} · ${isError ? "配额错误" : "配额不可用"}`
     };
   }
 
@@ -78,7 +101,7 @@ export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: 
     return {
       text: "$(dash) Codex 5小时剩余 -- · 周剩余 --",
       tooltip: "Codex 服务未提供可计算剩余比例的窗口数据；不会将缺失数据显示为 0%。\n点击查看账户用量。",
-      title: "Codex 对话管理器 · 5小时剩余 --（重置 --） · 周剩余 --（重置 --）"
+      title: `${titlePrefix} · 5h left --（--） · wk left --（--）`
     };
   }
 
@@ -90,7 +113,7 @@ export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: 
     .filter(window => window.kind === kind)
     .sort((left, right) => left.remainingPercent - right.remainingPercent)[0];
   const windowSummary = `5小时剩余 ${remainingFor("primary")} · 周剩余 ${remainingFor("secondary")}`;
-  const title = `Codex 对话管理器 · 5小时剩余 ${remainingFor("primary")}（重置 ${resetTime(windowFor("primary")?.resetsAt)}） · 周剩余 ${remainingFor("secondary")}（重置 ${resetTime(windowFor("secondary")?.resetsAt)}）`;
+  const title = `${titlePrefix} · 5h left ${remainingFor("primary")}（${resetTime(windowFor("primary")?.resetsAt, now)}） · wk left ${remainingFor("secondary")}（${resetTime(windowFor("secondary")?.resetsAt, now)}）`;
   const tooltip = [
     "Codex 配额剩余比例（状态栏与管理器标题显示五小时和周窗口；以下列出全部配额窗口）",
     ...windows.map(window => `${window.label}：剩余 ${window.remainingPercent}%${window.resetsAt ? ` · 重置 ${new Date(window.resetsAt).toLocaleString()}` : ""}`),

@@ -97,8 +97,14 @@ function spawnCli(path: string, args: string[], options: SpawnOptions): ChildPro
   return spawn(executable, args, options) as ChildProcessWithoutNullStreams;
 }
 
-export function spawnAppServer(path: string): ChildProcessWithoutNullStreams {
-  return spawnCli(path, ["app-server", "--listen", "stdio://"], { stdio: ["pipe", "pipe", "pipe"] });
+export interface AppServerProcessOptions {
+  env?: NodeJS.ProcessEnv;
+  config?: string[];
+}
+
+export function spawnAppServer(path: string, options: AppServerProcessOptions = {}): ChildProcessWithoutNullStreams {
+  const overrides = (options.config ?? []).flatMap(value => ["-c", value]);
+  return spawnCli(path, [...overrides, "app-server", "--listen", "stdio://"], { stdio: ["pipe", "pipe", "pipe"], env: options.env });
 }
 
 export function runCli(path: string, args: string[], timeoutMs = 60_000, cwd?: string): Promise<CliRunResult> {
