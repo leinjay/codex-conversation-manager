@@ -8,6 +8,14 @@ type SourceFilter = ManagerSnapshot["sourceFilter"];
 type SortKey = ManagerSnapshot["sortKey"];
 type Direction = ManagerSnapshot["sortDirection"];
 
+export interface SessionFilters {
+  sourceFilter: SourceFilter;
+  projectFilter: string;
+  search: string;
+  sortKey: SortKey;
+  sortDirection: Direction;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
 }
@@ -79,18 +87,36 @@ export class SessionManager {
   private scanLimitHit = false;
   private listRefreshedAt?: number;
   private listRefreshPromise?: Promise<void>;
+  private listVersion = 0;
 
   constructor(
     private readonly data: CodexDataService,
     private readonly getCliStatus: () => CliStatus,
     private readonly onChange: (snapshot: ManagerSnapshot) => void,
-    private readonly preferredProject?: string
-  ) {}
+    preferredProject?: string,
+    initialFilters?: unknown,
+    private readonly onFiltersChange?: (filters: SessionFilters) => void
+  ) {
+    const saved = asRecord(initialFilters);
+    if (saved.sourceFilter === "all" || saved.sourceFilter === "local" || saved.sourceFilter === "cloud") this.sourceFilter = saved.sourceFilter;
+    this.projectFilter = typeof saved.projectFilter === "string" ? displayProjectLabel(saved.projectFilter)
+      : preferredProject ? displayProjectLabel(preferredProject) : "";
+    if (typeof saved.search === "string") this.search = saved.search.trim();
+    if (saved.sortKey === "created" || saved.sortKey === "updated" || saved.sortKey === "active") this.sortKey = saved.sortKey;
+    if (saved.sortDirection === "asc" || saved.sortDirection === "desc") this.sortDirection = saved.sortDirection;
+  }
+
+  filters(): SessionFilters {
+    return { sourceFilter: this.sourceFilter, projectFilter: this.projectFilter, search: this.search, sortKey: this.sortKey, sortDirection: this.sortDirection };
+  }
 
   snapshot(): ManagerSnapshot {
     const matching = this.getMatchingRecords();
     const start = this.pageIndex * PAGE_SIZE;
     const projects = uniqueProjectLabels([...this.localRecords, ...this.cloudRecords]);
+    if (this.projectFilter && !projects.some(project => projectIdentity(project) === projectIdentity(this.projectFilter))) {
+      projects.unshift(this.projectFilter);
+    }
     return {
       records: matching.slice(start, start + PAGE_SIZE).map(record => ({ ...record, raw: {} })),
       projects,
@@ -122,27 +148,9 @@ export class SessionManager {
     this.changed();
     const tasks: Promise<void>[] = [this.refreshListInternal(), this.refreshUsageInternal()];
     await Promise.all(tasks);
-    const findPreferredProject = (): string | undefined => this.preferredProject
-      ? uniqueProjectLabels([...this.localRecords, ...this.cloudRecords])
-        .find(project => projectIdentity(project) === projectIdentity(this.preferredProject!))
-      : undefined;
-    let matchingProject = findPreferredProject();
-    let scannedPages = 0;
-    while (!matchingProject && this.preferredProject && this.localHasMore && scannedPages < MAX_SCAN_PAGES_PER_ACTION) {
-      if (!await this.loadSource("local")) break;
-      scannedPages += 1;
-      matchingProject = findPreferredProject();
-    }
-    if (matchingProject && !this.projectFilter) {
-      this.projectFilter = matchingProject;
-      this.pageIndex = 0;
-      this.scanLimitHit = false;
-      this.loading = true;
-      this.changed();
-      await this.ensureVisiblePageFilled();
-    }
     this.listRefreshedAt = Date.now();
     this.loading = false;
+    this.onFiltersChange?.(this.filters());
     this.changed();
   }
 
@@ -183,6 +191,7 @@ export class SessionManager {
 
   async setSearch(value: string): Promise<void> {
     this.search = value.trim();
+    this.onFiltersChange?.(this.filters());
     this.pageIndex = 0;
     this.scanLimitHit = false;
     this.message = undefined;
@@ -196,6 +205,7 @@ export class SessionManager {
   async setSource(value: SourceFilter): Promise<void> {
     const refreshCloud = value === "cloud" && this.sourceFilter !== "cloud";
     this.sourceFilter = value;
+    this.onFiltersChange?.(this.filters());
     this.pageIndex = 0;
     this.scanLimitHit = false;
     this.message = undefined;
@@ -216,7 +226,8 @@ export class SessionManager {
 
   async setProject(value: string): Promise<void> {
     if (this.sourceFilter === "cloud") return;
-    this.projectFilter = value;
+    this.projectFilter = displayProjectLabel(value);
+    this.onFiltersChange?.(this.filters());
     this.pageIndex = 0;
     this.scanLimitHit = false;
     this.message = undefined;
@@ -230,6 +241,7 @@ export class SessionManager {
   async setSort(key: SortKey, direction: Direction): Promise<void> {
     this.sortKey = key;
     this.sortDirection = direction;
+    this.onFiltersChange?.(this.filters());
     this.pageIndex = 0;
     this.message = undefined;
     this.scanLimitHit = false;
@@ -359,6 +371,7 @@ export class SessionManager {
   }
 
   private resetRecords(): void {
+    this.listVersion += 1;
     this.localRecords = [];
     this.cloudRecords = [];
     this.localCursor = undefined;
@@ -377,15 +390,18 @@ export class SessionManager {
     if (source === "local" && (!this.localHasMore || (this.localLoaded && this.localCursor === null))) return false;
     if (source === "cloud" && (!this.cloudHasMore || (this.cloudLoaded && this.cloudCursor === null))) return false;
     const cursor = source === "local" ? this.localCursor : this.cloudCursor;
+    const version = this.listVersion;
     try {
       if (source === "local") {
         const page = await this.data.getLocalPage(cursor, this.sortKey, this.sortDirection);
+        if (version !== this.listVersion) return false;
         this.addUnique(this.localRecords, page.records);
         this.localLoaded = true;
         this.localHasMore = Boolean(page.cursor) && page.cursor !== cursor;
         this.localCursor = page.cursor ?? null;
       } else {
         const page = await this.data.getCloudPage(cursor);
+        if (version !== this.listVersion) return false;
         this.addUnique(this.cloudRecords, page.records);
         this.cloudLoaded = true;
         this.cloudHasMore = Boolean(page.cursor) && page.cursor !== cursor;
@@ -394,6 +410,7 @@ export class SessionManager {
       this.errors[source] = undefined;
       return true;
     } catch (error) {
+      if (version !== this.listVersion) return false;
       this.errors[source] = shortError(error);
       if (source === "local") {
         this.localLoaded = true;

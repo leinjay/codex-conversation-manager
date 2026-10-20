@@ -213,7 +213,7 @@ function getHtml(nonce: string, cspSource: string): string {
   <div class="header"><div class="header-main"><h1>Codex 对话管理器</h1></div><button id="refresh" title="刷新会话和用量">刷新</button></div>
   <section aria-label="所有 Codex 账户">
     <div id="accountList" class="account-list"></div>
-    <button id="accountMenu" class="account-row account-manage" type="button" aria-haspopup="dialog" aria-label="管理新账户" title="添加、保存或切换 Codex 账户"><span class="account-indicator" aria-hidden="true">＋</span><span>管理新账户</span></button>
+    <button id="accountMenu" class="account-row account-manage" type="button" aria-haspopup="dialog" aria-label="管理账户" title="添加、保存或切换 Codex 账户"><span class="account-indicator" aria-hidden="true">＋</span><span>管理账户</span></button>
   </section>
   <div id="notices"></div>
   <nav class="tabs" aria-label="管理器页面">
@@ -356,15 +356,17 @@ function getHtml(nonce: string, cspSource: string): string {
       $('#next').disabled = !snapshot.hasMore || snapshot.loading;
       const container = $('#results');
       if (!snapshot.records.length) {
-        const anyError = snapshot.errors.local || snapshot.errors.cloud;
+        const anyError = snapshot.sourceFilter === 'local' ? snapshot.errors.local
+          : snapshot.sourceFilter === 'cloud' ? snapshot.errors.cloud : snapshot.errors.local || snapshot.errors.cloud;
         const emptyText = anyError
           ? '当前没有可显示的会话。请检查上方来源状态。'
           : snapshot.loading
             ? '正在读取会话…'
             : snapshot.sourceFilter === 'cloud' && !(snapshot.search || '').trim()
               ? 'Codex Cloud 当前没有返回可显示的任务。请确认当前 Codex CLI 登录的账户和云端任务来源。'
-              : '此筛选条件下没有会话。';
-        container.innerHTML = '<div class="empty">' + escapeHtml(emptyText) + '</div>';
+              : '当前无对话';
+        container.innerHTML = '<div class="empty">' + escapeHtml(emptyText) + '</div>'
+          + (!anyError && !snapshot.loading && snapshot.hasMore ? '<p class="small-note">已扫描的会话中没有匹配结果，可点击“下一页 / 继续扫描”加载更早会话。</p>' : '');
         return;
       }
       container.innerHTML = snapshot.records.map(record => {
@@ -585,7 +587,7 @@ function getHtml(nonce: string, cspSource: string): string {
           + (current || state?.busy ? ' disabled' : '') + '><span class="account-indicator" aria-hidden="true">'
           + (current ? '▶' : '') + '</span><span class="account-row-content"><span class="account-email">'
           + escapeHtml(row.email) + '</span><span class="account-quota">' + escapeHtml(quota) + '</span></span></button>';
-      }).join('') : '<div class="small-note">尚未保存账户；点击下方“管理新账户”保存或添加。</div>';
+      }).join('') : '<div class="small-note">尚未保存账户；点击下方“管理账户”保存或添加。</div>';
     }
     function questionExcerpt(text, query) {
       const compact = String(text || '').replace(/\\s+/g, ' ').trim();
@@ -786,6 +788,7 @@ function getHtml(nonce: string, cspSource: string): string {
       if (row && !row.disabled && row.dataset.switchAccount) send('switchAccount', { id: row.dataset.switchAccount });
     });
     $('#search').addEventListener('input', event => {
+      send('interaction');
       clearTimeout(searchTimer);
       const value = event.target.value;
       searchTimer = setTimeout(() => send('search', { value }), 300);

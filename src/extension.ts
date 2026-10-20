@@ -9,6 +9,7 @@ import { CodexDataService, shortError } from "./dataService";
 import { codexIdeThreadUri } from "./links";
 import { buildQuotaStatusBarContent } from "./quotaStatusBar";
 import { SessionManager } from "./sessionManager";
+import { StartupConversation } from "./startupConversation";
 import { ManagerWebviewProvider } from "./view";
 import type { CliStatus, ManagerSnapshot, SessionRecord } from "./types";
 
@@ -36,6 +37,7 @@ let fallbackWarningShown = false;
 let lastUsageSnapshot: ManagerSnapshot["usage"];
 let usageRefreshedAt: number | undefined;
 let accounts: AccountManager | undefined;
+let startupConversation: StartupConversation | undefined;
 
 function managerSnapshot(): ManagerSnapshot {
   return { ...(manager?.snapshot() ?? emptySnapshot()), accounts: accounts?.snapshot() };
@@ -155,7 +157,8 @@ function makeCliStatus(): CliStatus {
 }
 
 function currentWorkspaceProjectPath(): string | undefined {
-  if (vscode.env.remoteName || process.env.WSL_DISTRO_NAME) return undefined;
+  if (vscode.env.remoteName || process.env.WSL_DISTRO_NAME
+    || vscode.workspace.getConfiguration("chatgpt").get<boolean>("runCodexInWindowsSubsystemForLinux", false)) return undefined;
   const activeUri = vscode.window.activeTextEditor?.document.uri;
   const activeFolder = activeUri ? vscode.workspace.getWorkspaceFolder(activeUri) : undefined;
   return (activeFolder ?? vscode.workspace.workspaceFolders?.[0])?.uri.fsPath;
@@ -317,6 +320,7 @@ async function detectCli(): Promise<void> {
 async function handleWebviewMessage(message: Record<string, unknown>, webview: vscode.Webview): Promise<void> {
   if (!manager) return;
   const type = typeof message.type === "string" ? message.type : "";
+  if (type !== "ready") startupConversation?.cancel();
   const reportFailure = (error: unknown) => {
     const text = shortError(error);
     void webview.postMessage({ type: "message", text, error: true });
@@ -460,11 +464,21 @@ export function activate(context: vscode.ExtensionContext): void {
     async () => { dataService?.dispose(); }
   );
   context.subscriptions.push(accounts);
+  const workspaceProject = currentWorkspaceProjectPath();
+  startupConversation = new StartupConversation(Boolean(workspaceProject), async () => {
+    const extension = vscode.extensions.getExtension("openai.chatgpt");
+    if (!extension) throw new Error("未检测到 Codex 扩展，无法自动打开对话。");
+    await extension.activate();
+  }, openRecordInIde);
   manager = new SessionManager(dataService, makeCliStatus, snapshot => {
     accounts?.observeUsage(snapshot.usage);
     void webviews?.sendAllStates();
     updateQuotaStatusBar(snapshot);
-  }, currentWorkspaceProjectPath());
+  }, workspaceProject, context.workspaceState.get("sponge.sessionFilters"), filters => {
+    void context.workspaceState.update("sponge.sessionFilters", filters).then(undefined, error => {
+      void vscode.window.showWarningMessage(`会话筛选条件未能保存：${shortError(error)}`);
+    });
+  });
 
   quotaStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, -1000);
   quotaStatusBar.name = "Codex quota remaining";
@@ -503,7 +517,10 @@ export function activate(context: vscode.ExtensionContext): void {
     fallbackWarningShown = true;
   }
 
-  const addCommand = (id: string, callback: (...args: unknown[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(id, callback));
+  const addCommand = (id: string, callback: (...args: unknown[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(id, (...args: unknown[]) => {
+    startupConversation?.cancel();
+    return callback(...args);
+  }));
   addCommand("sponge.sessions.open", () => openManager());
   addCommand("sponge.sessions.refresh", () => manager?.refresh());
   addCommand("sponge.codex.detectCli", () => detectCli());
@@ -548,6 +565,9 @@ export function activate(context: vscode.ExtensionContext): void {
   void (async () => {
     await accounts!.initialize().catch(async error => { await vscode.window.showErrorMessage(shortError(error)); });
     await manager!.initialize();
+    await startupConversation!.restore(() => manager!.snapshot()).catch(error => {
+      void vscode.window.showWarningMessage(`自动打开首条对话未完成：${shortError(error)}`);
+    });
     try {
       if (!vscode.env.remoteName && !vscode.workspace.getConfiguration("chatgpt").get<boolean>("runCodexInWindowsSubsystemForLinux", false)) {
         await accounts!.verifyAfterReload();
@@ -561,6 +581,8 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
+  startupConversation?.cancel();
+  startupConversation = undefined;
   accounts?.dispose();
   accounts = undefined;
   manager?.dispose();

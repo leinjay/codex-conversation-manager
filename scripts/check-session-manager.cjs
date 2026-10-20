@@ -6,6 +6,7 @@ Module._load = function (request, parent, isMain) {
   return originalLoad.call(this, request, parent, isMain);
 };
 const { SessionManager } = require("../dist/sessionManager.js");
+const { StartupConversation } = require("../dist/startupConversation.js");
 const { formatThreadDeleteError } = require("../dist/dataService.js");
 const { startSessionListAutoRefresh, SESSION_LIST_REFRESH_INTERVAL_MS } = require("../dist/autoRefresh.js");
 const { formatManagerViewTitle } = require("../dist/quotaStatusBar.js");
@@ -216,13 +217,81 @@ async function main() {
   assert.equal(projectManager.snapshot().filteredCount, 2, "The default workspace filter should include Windows path case variants.");
   const noWorkspaceMatch = new SessionManager(fakeData(pathVariants, []), () => cli, () => {}, "D:\\other-project");
   await noWorkspaceMatch.initialize();
-  assert.equal(noWorkspaceMatch.snapshot().projectFilter, "", "A workspace without matching project metadata should not hide all sessions.");
+  assert.equal(noWorkspaceMatch.snapshot().projectFilter, "D:\\other-project", "Keep the current workspace filter even when it has no conversation.");
+  assert.equal(noWorkspaceMatch.snapshot().records.length, 0, "Never substitute sessions belonging to other projects.");
+  assert.ok(noWorkspaceMatch.snapshot().projects.includes("D:\\other-project"), "An empty project remains selectable.");
+  await noWorkspaceMatch.refresh();
+  assert.equal(noWorkspaceMatch.snapshot().records.length, 0, "Refresh must retain the empty workspace selection.");
   const olderProjectRecords = Array.from({ length: 26 }, (_, index) => makeRecord("local", index + 1));
   olderProjectRecords[25].projectLabel = "D:\\workspace\\current";
   const olderWorkspaceProject = new SessionManager(fakeData(olderProjectRecords, []), () => cli, () => {}, "d:\\workspace\\current");
   await olderWorkspaceProject.initialize();
   assert.equal(olderWorkspaceProject.snapshot().projectFilter, "D:\\workspace\\current", "The default project should be found after scanning beyond the initial page.");
   assert.equal(olderWorkspaceProject.snapshot().filteredCount, 1);
+  let persistedFilters;
+  const savedLocal = [
+    { ...makeRecord('local', 51), title: 'Wanted newest', projectLabel: '/workspace/current' },
+    { ...makeRecord('local', 42), title: 'Wanted oldest', projectLabel: '/workspace/current' },
+    { ...makeRecord('local', 100), title: 'Wanted another project', projectLabel: '/workspace/other' },
+    { ...makeRecord('local', 1), title: 'Excluded title', projectLabel: '/workspace/current' }
+  ];
+  const savedManager = new SessionManager(fakeData(savedLocal, []), () => cli, () => {}, '/workspace/current', undefined, filters => { persistedFilters = filters; });
+  await savedManager.initialize();
+  await savedManager.setSource('local');
+  await savedManager.setSearch('Wanted');
+  await savedManager.setSort('created', 'asc');
+  const expectedKeys = savedManager.snapshot().records.map(row => row.key);
+  assert.deepEqual(expectedKeys, ['local:42', 'local:51']);
+  const initialStates = [];
+  const reopened = new SessionManager(fakeData(savedLocal, []), () => cli, snapshot => initialStates.push(snapshot), '/workspace/current', persistedFilters);
+  await reopened.initialize();
+  assert.deepEqual(reopened.filters(), persistedFilters);
+  assert.deepEqual(reopened.snapshot().records.map(row => row.key), expectedKeys, 'Reopening restores every filter and the selected ordering.');
+  assert.ok(initialStates.every(snapshot => snapshot.records.every(row => row.projectLabel === '/workspace/current' && row.title.includes('Wanted'))), 'Do not flash unfiltered records during initialization.');
+  await reopened.refreshList();
+  assert.deepEqual(reopened.snapshot().records.map(row => row.key), expectedKeys, 'Refresh keeps search, source, project, and sorting.');
+  await reopened.setProject('/workspace/empty');
+  await reopened.refreshList();
+  assert.equal(reopened.snapshot().projectFilter, '/workspace/empty');
+  assert.equal(reopened.snapshot().records.length, 0);
+  const resetAll = new SessionManager(fakeData(savedLocal, []), () => cli, () => {}, '/workspace/current', { projectFilter: '' });
+  await resetAll.initialize();
+  assert.equal(resetAll.snapshot().filteredCount, savedLocal.length, 'An explicitly saved all-projects choice must survive reopening.');
+
+  const opened = [];
+  const startup = new StartupConversation(true, async () => {}, async row => { opened.push(row.key); });
+  await startup.restore(() => savedManager.snapshot());
+  await startup.restore(() => savedManager.snapshot());
+  assert.deepEqual(opened, ['local:42'], 'Startup opens only the first filtered and sorted result, exactly once.');
+  await savedManager.refreshList();
+  await startup.restore(() => savedManager.snapshot());
+  assert.equal(opened.length, 1, 'Refresh never changes the selected Codex conversation.');
+  await new StartupConversation(true, async () => {}, async () => { throw new Error('Should not open from empty results'); }).restore(() => reopened.snapshot());
+  await new StartupConversation(false, async () => {}, async () => { throw new Error('Should not open in a remote/no-project workspace'); }).restore(() => savedManager.snapshot());
+  const cloudFirst = { ...savedManager.snapshot(), records: [makeRecord('cloud', 1), ...savedManager.snapshot().records] };
+  await new StartupConversation(true, async () => {}, async () => { throw new Error('Never skip the first result to open another local result'); }).restore(() => cloudFirst);
+  let releasePreparation;
+  const cancelled = new StartupConversation(true, () => new Promise(resolve => { releasePreparation = resolve; }), async () => { throw new Error('User interaction must win over startup selection'); });
+  const restoring = cancelled.restore(() => savedManager.snapshot());
+  cancelled.cancel();
+  releasePreparation();
+  await restoring;
+  let currentSnapshot = savedManager.snapshot();
+  const changedDuringPrepare = new StartupConversation(true, async () => { currentSnapshot = { ...currentSnapshot, records: [] }; }, async () => { throw new Error('Do not open a record that no longer matches'); });
+  await changedDuringPrepare.restore(() => currentSnapshot);
+
+  let releaseOldPage;
+  let localRequests = 0;
+  const concurrentSort = new SessionManager({ ...fakeData([], []), getLocalPage: async () => {
+    localRequests++;
+    if (localRequests === 1) return new Promise(resolve => { releaseOldPage = resolve; });
+    return { records: [makeRecord('local', 2)], cursor: null };
+  } }, () => cli, () => {});
+  const initializing = concurrentSort.initialize();
+  await concurrentSort.setSort('created', 'asc');
+  releaseOldPage({ records: [makeRecord('local', 999)], cursor: null });
+  await initializing;
+  assert.deepEqual(concurrentSort.snapshot().records.map(row => row.key), ['local:2'], 'Ignore late page responses belonging to a previous sort/list generation.');
   await projectManager.setProject("D:\\code\\transformers");
   assert.equal(projectManager.snapshot().filteredCount, 2, "Case variants of a Windows path should filter as one project.");
 
