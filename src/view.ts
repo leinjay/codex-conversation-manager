@@ -107,11 +107,11 @@ function getHtml(nonce: string, cspSource: string): string {
     .subtle { font-size: 11px; }
     .header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .header-main { min-width: 0; flex: 1; }
-    .account-button { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; border: 0; font-size: 11px; line-height: 16px; background: transparent; color: var(--vscode-descriptionForeground); text-align: left; }
     .account-list { display: grid; gap: 3px; margin-top: 8px; }
     .account-row { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 5px 6px; border: 0; background: transparent; color: #999; font-size: 12px; text-align: left; }
     .account-row.current { color: #fff; font-size: 14px; font-weight: 600; background: #292929; }
     .account-row:disabled { opacity: 1; cursor: default; }
+    .account-manage { margin-top: 3px; }
     .account-indicator { flex: 0 0 12px; }
     .account-row-content { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; min-width: 0; }
     .account-email { overflow-wrap: anywhere; }
@@ -210,8 +210,11 @@ function getHtml(nonce: string, cspSource: string): string {
   </style>
 </head>
 <body>
-  <div class="header"><div class="header-main"><h1>Codex 对话管理器</h1><button id="accountMenu" class="account-button" type="button" aria-haspopup="dialog" aria-label="选择或管理 Codex 账户" title="添加、保存或切换 Codex 账户">账户 ▾</button></div><button id="refresh" title="刷新会话和用量">刷新</button></div>
-  <section id="accountList" class="account-list" aria-label="所有 Codex 账户"></section>
+  <div class="header"><div class="header-main"><h1>Codex 对话管理器</h1></div><button id="refresh" title="刷新会话和用量">刷新</button></div>
+  <section aria-label="所有 Codex 账户">
+    <div id="accountList" class="account-list"></div>
+    <button id="accountMenu" class="account-row account-manage" type="button" aria-haspopup="dialog" aria-label="管理新账户" title="添加、保存或切换 Codex 账户"><span class="account-indicator" aria-hidden="true">＋</span><span>管理新账户</span></button>
+  </section>
   <div id="notices"></div>
   <nav class="tabs" aria-label="管理器页面">
     <button class="tab active" data-tab="sessions">对话</button>
@@ -555,8 +558,7 @@ function getHtml(nonce: string, cspSource: string): string {
         : state?.phase === 'reloadRequired' ? '需重载 Codex'
         : state?.phase === 'confirmationRequired' ? 'CLI 已核验，Codex 待确认'
         : state?.phase === 'confirmed' ? '已核对' : '切换 / 管理';
-      button.textContent = email + ' · ' + status + ' ▾';
-      button.title = email + ' · ' + (state?.message || '保存当前账户、添加账户或切换；切换会重载当前窗口。');
+      button.title = email + ' · ' + status + ' · ' + (state?.message || '保存当前账户、添加账户或切换；切换会重载当前窗口。');
       button.setAttribute('aria-label', '管理 Codex 账户：' + email + '，' + status);
     }
     function renderAccountList() {
@@ -583,7 +585,7 @@ function getHtml(nonce: string, cspSource: string): string {
           + (current || state?.busy ? ' disabled' : '') + '><span class="account-indicator" aria-hidden="true">'
           + (current ? '▶' : '') + '</span><span class="account-row-content"><span class="account-email">'
           + escapeHtml(row.email) + '</span><span class="account-quota">' + escapeHtml(quota) + '</span></span></button>';
-      }).join('') : '<div class="small-note">尚未保存账户；点击上方账户入口保存或添加。</div>';
+      }).join('') : '<div class="small-note">尚未保存账户；点击下方“管理新账户”保存或添加。</div>';
     }
     function questionExcerpt(text, query) {
       const compact = String(text || '').replace(/\\s+/g, ' ').trim();

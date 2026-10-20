@@ -20,9 +20,9 @@ VS Code extension for Windows and Linux that browses local Codex conversations a
 
 ## Saved accounts
 
-Use the account icon beside the manager's refresh icon, or the compact account line below its heading. This entry is available on every tab and opens a searchable native menu. Choose **保存当前账户** to keep the current login, **添加其他账户…** to authorize another account once in the official browser flow, or an email to switch. Adding an account leaves the current login intact; login can be cancelled. Removing a saved copy preserves the active login and conversation history.
+Use the account icon beside the manager's refresh icon, or the **管理新账户** row after all account rows. The old email/status subtitle is removed. The management row is available on every tab, even with no saved accounts, and opens the same searchable native menu; its tooltip retains account verification and authorization status. Choose **保存当前账户** to keep the current login, **添加其他账户…** to authorize another account once in the official browser flow, or an email to switch. Adding an account leaves the current login intact; login can be cancelled. Removing a saved copy preserves the active login and conversation history.
 
-All saved accounts appear directly below this entry, together with the current account even when it has not been saved. Each row shows the full email and a compact quota summary such as `5h Left 48% (21:15) · Wk Left 75% (09:43+6d)`. The current CLI account has an arrow and larger white text; other accounts are gray. Rows wrap in narrow sidebars. Clicking another account asks for confirmation before switching and reloading. The marker identifies the CLI account; the existing Codex IDE confirmation status remains separate.
+All saved accounts appear directly below the manager heading and above **管理新账户**, together with the current account even when it has not been saved. Each row shows the full email and a compact quota summary such as `5h Left 48% (21:15) · Wk Left 75% (09:43+6d)`. The current CLI account has an arrow and larger white text; other accounts are gray. Rows wrap in narrow sidebars. Clicking another account asks for confirmation before switching and reloading. The marker identifies the CLI account; the existing Codex IDE confirmation status remains separate.
 
 The list refreshes at startup, manually, and every five minutes. Current-account usage is reused; other saved accounts are queried through dedicated App Server processes in isolated temporary homes. Refreshed credentials are preserved in SecretStorage even if a later quota request fails, and the active login is not replaced. Background reads share the account operation lock; a requested account operation takes priority after the current isolated read and cleanup finish. Quota data remains in memory, hover text shows its last update, and reset-day suffixes update every minute from cached data. Missing, failed, loading, and expired-authorization states are explicit.
 
@@ -45,7 +45,7 @@ The account-management feature reads and restores the official file login cache 
     npm install
     npm run compile
     npm run package
-    code --install-extension ./codex-conversation-manager-0.2.31.vsix --force
+    code --install-extension ./codex-conversation-manager-0.2.32.vsix --force
 
 Open the Codex view container and choose **Codex 对话管理器**. If the Codex container cannot be detected, run **Sponge: 打开 Codex 对话管理器** from the Command Palette.
 

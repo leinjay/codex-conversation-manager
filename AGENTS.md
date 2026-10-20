@@ -9,6 +9,13 @@
 
 ## Change log
 
+### 2026-10-20 — 0.2.32: Move account management below the account list
+
+- Updated `src/view.ts` to remove the repeated email/verification subtitle above the account rows. Added a separate `管理新账户` row after all accounts, styled and aligned with the gray account rows. It retains the original `accounts` message handler and opens the same native management menu, including saving, adding, switching, removing, and verification/cancellation actions. The row remains available with no saved accounts and during authorization; verification and authorization states remain in its tooltip and accessible label. Updated the empty-list guidance to point downward to this row.
+- Updated FR-11 and acceptance criterion 16 in `AGENT.md`, README entry placement, package versions to 0.2.32, and the existing webview regression checks for the new placement, stable label, retained state tooltips, and unchanged click message.
+- Verification passed: `npm run compile`, `node scripts/check-webview-script.cjs`, and `git diff --check`. Visually inspected a headless Chrome 820px preview using synthetic accounts: the old subtitle is absent, the management row follows every account, and quota/current-account styling is retained. Authentication/account/CLI regression suites, real authorization or account switching, live VS Code menu interaction, and Windows execution were not run for this layout-only change.
+- `npm run package -- --out '/home/winnie/下载/vsix/codex-conversation-manager-0.2.32.vsix'` succeeded, installed the VSIX using VS Code CLI, and confirmed `sponge.codex-conversation-manager@0.2.32`. VSCE emitted its existing missing-LICENSE warning; VS Code CLI emitted its existing Node `url.parse()` deprecation warning. The final rebuilt package includes this maintenance entry. Reload an open VS Code window to activate the updated layout.
+
 ### 2026-10-19 — 0.2.31: Distinguish missing encrypted copies and recover active accounts
 
 - Investigated the recurring unavailable-cache report without printing credentials or reading saved secret contents: Secret Service is running and its default collection is unlocked, two saved-account metadata entries exist, but neither the active VS Code state database nor its backup has the corresponding persisted secret records. Inspected the installed VS Code implementation and official keyring guidance: when encryption is unavailable, SecretStorage falls back to memory storage, so a same-window save can disappear after reload. This is consistent with the earlier locked-keyring warning; lack of persisted records alone cannot prove how every prior save was performed.
