@@ -4,6 +4,11 @@
   "description": "Browse local Codex conversations and Codex Cloud tasks from the Codex view container.",
   "version": "0.2.34",
   "publisher": "sponge",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leinjay/vscode-extensions.git",
+    "directory": "codex-conversation-manager"
+  },
   "engines": {
     "vscode": "^1.110.0"
   },
