@@ -131,4 +131,5 @@ export interface AccountQuotaSnapshot {
   status: "loading" | "available" | "unavailable" | "error" | "reauth" | "cacheMissing";
   text?: string;
   checkedAt?: number;
+  refreshText?: string;
 }

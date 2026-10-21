@@ -10,7 +10,7 @@ const end = source.indexOf(tick + ";", start + 7);
 assert.ok(start >= 0 && end > start, "Could not find the webview HTML template.");
 
 const expression = source.slice(start + "return ".length, end + 1);
-const html = new Function("nonce", "cspSource", "return " + expression + ";")("smoke_nonce", "vscode-webview:");
+const html = new Function("nonce", "cspSource", "formatQuotaRefreshTime", "return " + expression + ";")("smoke_nonce", "vscode-webview:", require("../dist/quotaStatusBar.js").formatQuotaRefreshTime);
 const scriptMatch = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/);
 assert.ok(scriptMatch, "Could not find the inline webview script.");
 assert.ok(html.indexOf('id="accountList"') < html.indexOf('id="accountMenu"') && html.indexOf('id="accountMenu"') < html.indexOf('<nav class="tabs"'), "The management row must follow all accounts and remain outside individual tabs.");
@@ -40,19 +40,22 @@ const renderAccounts = accounts => {
   return accountList.innerHTML;
 };
 const accountRows = renderAccounts({ currentId: 'a', currentEmail: 'a@example.com', items: [
-  { id: 'a', email: 'a@example.com', quota: { status: 'available', text: '5h Left 48% (21:15) · Wk Left 75% (09:43+6d)' } },
+  { id: 'a', email: 'a@example.com', quota: { status: 'available', text: '5h 48% 21:15 / 7d 75% 09:43+6d', refreshText: '[17:48/5m]' } },
   { id: 'b', email: '<img src=x onerror=alert(1)>', quota: { status: 'error' } }
 ] });
 assert.equal((accountRows.match(/aria-current="true"/g) || []).length, 1);
 assert.equal((accountRows.match(/▶/g) || []).length, 1);
 assert.match(accountRows, /class="account-row current"[^>]*disabled/);
-assert.match(accountRows, /5h Left 48% \(21:15\) · Wk Left 75% \(09:43\+6d\)/);
+assert.match(accountRows, /5h 48% 21:15 \/ 7d 75% 09:43\+6d\[17:48\/5m\]/);
+assert.match(accountRows, /class="account-email">a\| /);
+assert.match(accountRows, /title="a@example.com/);
+assert.doesNotMatch(accountRows, /class="account-email">a@example.com/);
 assert.doesNotMatch(accountRows, /<img/);
 assert.match(accountRows, /&lt;img/);
 assert.match(accountRows, /额度读取失败/);
 assert.match(html, /\.account-row\.current \{ color: #fff; font-size: 14px;/);
 assert.match(html, /\.account-row \{[^}]*color: #999; font-size: 12px;/);
-assert.match(renderAccounts({ currentEmail: 'unsaved@example.com', currentQuota: { status: 'unavailable' }, items: [] }), /unsaved@example.com.*服务未提供额度/);
+assert.match(renderAccounts({ currentEmail: 'unsaved@example.com', currentQuota: { status: 'unavailable' }, items: [] }), /unsaved\| <\/span>.*服务未提供额度\[--:--\/5m\]/);
 assert.match(renderAccounts({ items: [{ id: 'b', email: 'b@example.com', quota: { status: 'reauth' } }] }), /需重新授权/);
 assert.match(renderAccounts({ items: [{ id: 'b', email: 'b@example.com', quota: { status: 'cacheMissing' } }] }), /加密副本未读取/);
 assert.doesNotMatch(accountList.innerHTML, /需重新授权/);

@@ -9,7 +9,6 @@ const { SessionManager } = require("../dist/sessionManager.js");
 const { StartupConversation } = require("../dist/startupConversation.js");
 const { formatThreadDeleteError } = require("../dist/dataService.js");
 const { startSessionListAutoRefresh, SESSION_LIST_REFRESH_INTERVAL_MS } = require("../dist/autoRefresh.js");
-const { formatManagerViewTitle } = require("../dist/quotaStatusBar.js");
 
 const activeWriterThreadId = "01a0e721-b0f7-7f00-9610-44d0aaa41141";
 const activeWriterMessage = formatThreadDeleteError(
@@ -126,7 +125,6 @@ async function main() {
   managerRefreshCallback();
   await flushRefresh();
   assert.equal(lastEmittedRefreshTime, manager.snapshot().listRefreshedAt, "A scheduled list refresh should emit its completion time to the manager bar.");
-  assert.match(formatManagerViewTitle("Codex 对话管理器", lastEmittedRefreshTime), / · \[\d{2}:\d{2}\]$/);
   managerRefreshTimer.dispose();
   const duplicatePathRecords = [
     { ...makeRecord("local", 700), projectLabel: "D:\\code\\transformers" },

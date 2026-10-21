@@ -8,13 +8,13 @@ const accountNow = new Date(2026, 9, 19, 17, 0).getTime();
 assert.equal(formatAccountQuota([{ key: 'codex', label: 'Codex',
   primary: { usedPercent: 52, resetsAt: new Date(2026, 9, 19, 21, 15).getTime() },
   secondary: { usedPercent: 25, resetsAt: new Date(2026, 9, 25, 9, 43).getTime() }
-}], accountNow), '5h Left 48% (21:15) · Wk Left 75% (09:43+6d)');
-assert.equal(formatAccountQuota([], accountNow), '5h Left -- (--) · Wk Left -- (--)');
+}], accountNow), '5h 48% 21:15 / 7d 75% 09:43+6d');
+assert.equal(formatAccountQuota([], accountNow), '5h -- -- / 7d -- --');
 
 const unavailable = buildQuotaStatusBarContent();
 assert.match(unavailable.text, /Codex 用量/);
 assert.doesNotMatch(unavailable.text, /0%/);
-assert.equal(unavailable.title, "Codex 对话管理器 · 账户 读取中 · 配额读取中");
+assert.equal(unavailable.title, "账户 读取中| 配额读取中");
 
 const usage = {
   accountStatus: "available",
@@ -31,13 +31,13 @@ const usage = {
 const content = buildQuotaStatusBarContent(usage, 1_800_000_000_000, 1_800_000_000_000);
 const refreshDate = new Date(1_800_000_000_000);
 const refreshTime = `${String(refreshDate.getHours()).padStart(2, "0")}:${String(refreshDate.getMinutes()).padStart(2, "0")}`;
-assert.equal(formatManagerViewTitle(content.title, 1_800_000_000_000), `${content.title} · [${refreshTime}]`);
-assert.equal(formatManagerViewTitle(content.title), `${content.title} · [--:--]`);
+assert.equal(formatManagerViewTitle(content.title, 1_800_000_000_000), `${content.title}[${refreshTime}/5m]`);
+assert.equal(formatManagerViewTitle(content.title), `${content.title}[--:--/5m]`);
 for (const invalid of [NaN, Infinity, 9e15]) {
-  assert.equal(formatManagerViewTitle(content.title, invalid), `${content.title} · [--:--]`);
+  assert.equal(formatManagerViewTitle(content.title, invalid), `${content.title}[--:--/5m]`);
 }
 assert.equal(content.text, "$(pulse) 5小时剩余 82% · 周剩余 38%");
-assert.equal(content.title, `Codex 对话管理器 · first · 5h left 82%（${refreshTime}） · wk left 38%（${refreshTime}）`);
+assert.equal(content.title, `first| 5h 82% ${refreshTime} / 7d 38% ${refreshTime}`);
 assert.doesNotMatch(content.title, /重置|列表刷新|@example/);
 assert.match(content.tooltip, /5 小时/);
 assert.match(content.tooltip, /7 天/);
@@ -47,7 +47,7 @@ assert.match(content.tooltip, /上次更新/);
 
 const noPercentage = buildQuotaStatusBarContent({ ...usage, buckets: [{ key: "codex", label: "Codex" }] });
 assert.equal(noPercentage.text, "$(dash) Codex 5小时剩余 -- · 周剩余 --");
-assert.equal(noPercentage.title, "Codex 对话管理器 · first · 5h left --（--） · wk left --（--）");
+assert.equal(noPercentage.title, "first| 5h -- -- / 7d -- --");
 assert.doesNotMatch(noPercentage.text, /0%/);
 
 const primaryOnly = buildQuotaStatusBarContent({ ...usage, buckets: [{
@@ -56,14 +56,14 @@ const primaryOnly = buildQuotaStatusBarContent({ ...usage, buckets: [{
   primary: { usedPercent: 18, windowDurationMins: 300 }
 }] });
 assert.equal(primaryOnly.text, "$(pulse) 5小时剩余 82% · 周剩余 --");
-assert.match(primaryOnly.title, /wk left --（--）/);
+assert.match(primaryOnly.title, /7d -- --/);
 
 const error = buildQuotaStatusBarContent({ ...usage, quotaStatus: "error", quotaMessage: "未登录" });
 assert.match(error.text, /配额错误/);
 assert.match(error.title, /配额错误/);
 assert.match(error.tooltip, /未登录/);
-assert.match(error.title, /· first · 配额错误/, "A quota failure must not hide an available account.");
-assert.match(buildQuotaStatusBarContent({ ...usage, quotaStatus: "unavailable" }).title, /· first · 配额不可用/);
+assert.match(error.title, /first\| 配额错误/, "A quota failure must not hide an available account.");
+assert.match(buildQuotaStatusBarContent({ ...usage, quotaStatus: "unavailable" }).title, /first\| 配额不可用/);
 
 for (const [accountStatus, email, expected] of [
   ["available", undefined, "服务未提供"],
@@ -72,12 +72,12 @@ for (const [accountStatus, email, expected] of [
   ["unavailable", "stale@example.com", "不可用"]
 ]) {
   const result = buildQuotaStatusBarContent({ ...usage, accountStatus, email });
-  assert.ok(result.title.includes(`账户 ${expected} · 5h left 82%`));
+  assert.ok(result.title.includes(`账户 ${expected}| 5h 82%`));
   assert.doesNotMatch(result.title, /stale@example\.com/, "An unavailable account must not reuse an old identifier.");
 }
-assert.match(buildQuotaStatusBarContent({ ...usage, email: "  current@example.com\n" }).title, /· current ·/);
-assert.match(buildQuotaStatusBarContent({ ...usage, email: "kongranwei@gmail.com" }).title, /· kongranwei ·/);
-assert.match(buildQuotaStatusBarContent({ ...usage, email: "local-login" }).title, /· local-login ·/);
+assert.match(buildQuotaStatusBarContent({ ...usage, email: "  current@example.com\n" }).title, /current\| /);
+assert.match(buildQuotaStatusBarContent({ ...usage, email: "kongranwei@gmail.com" }).title, /kongranwei\| /);
+assert.match(buildQuotaStatusBarContent({ ...usage, email: "local-login" }).title, /local-login\| /);
 
 // Day suffixes use the machine's calendar across midnight, month/year boundaries, and DST.
 const originalTimezone = process.env.TZ;
@@ -92,16 +92,16 @@ try {
     }] }, undefined, new Date(now).getTime()).title;
   }
   assert.equal(titleAt("2026-12-31T23:59:00+08:00", Date.parse("2027-01-01T00:00:00+08:00"), Date.parse("2027-01-07T09:05:00+08:00")),
-    "Codex 对话管理器 · first · 5h left 82%（00:00+1d） · wk left 38%（09:05+7d）");
-  assert.match(titleAt("2027-01-01T00:00:00+08:00", Date.parse("2027-01-01T00:00:00+08:00")), /5h left 82%（00:00）/);
-  assert.match(titleAt("2026-10-31T23:59:00+08:00", Date.parse("2026-11-01T00:01:00+08:00")), /（00:01\+1d）/);
-  assert.match(titleAt("2026-10-19T00:01:00+08:00", Date.parse("2026-10-18T23:59:00+08:00")), /（23:59-1d）/);
+    "first| 5h 82% 00:00+1d / 7d 38% 09:05+7d");
+  assert.match(titleAt("2027-01-01T00:00:00+08:00", Date.parse("2027-01-01T00:00:00+08:00")), /5h 82% 00:00 \//);
+  assert.match(titleAt("2026-10-31T23:59:00+08:00", Date.parse("2026-11-01T00:01:00+08:00")), /00:01\+1d/);
+  assert.match(titleAt("2026-10-19T00:01:00+08:00", Date.parse("2026-10-18T23:59:00+08:00")), /23:59-1d/);
   for (const invalid of [undefined, NaN, Infinity, 9e15]) {
-    assert.match(titleAt("2026-10-19T00:00:00+08:00", invalid), /5h left 82%（--）/);
+    assert.match(titleAt("2026-10-19T00:00:00+08:00", invalid), /5h 82% -- \//);
   }
   process.env.TZ = "America/New_York";
-  assert.match(titleAt("2026-03-08T00:01:00-05:00", Date.parse("2026-03-09T23:59:00-04:00")), /（23:59\+1d）/);
-  assert.match(titleAt("2026-11-01T00:01:00-04:00", Date.parse("2026-11-02T23:59:00-05:00")), /（23:59\+1d）/);
+  assert.match(titleAt("2026-03-08T00:01:00-05:00", Date.parse("2026-03-09T23:59:00-04:00")), /23:59\+1d/);
+  assert.match(titleAt("2026-11-01T00:01:00-04:00", Date.parse("2026-11-02T23:59:00-05:00")), /23:59\+1d/);
 } finally {
   // On Windows deleting TZ alone can leave Node's native timezone at the last test value.
   process.env.TZ = originalTimezone ?? originalSystemTimezone;
@@ -128,14 +128,14 @@ const collapsedView = {
   onDidChangeVisibility() {}
 };
 provider.resolveWebviewView(collapsedView);
-assert.equal(collapsedView.title, `${unavailable.title} · [--:--]`);
+assert.equal(collapsedView.title, `${unavailable.title}[--:--/5m]`);
 provider.setQuotaTitle(content.title);
-provider.setListRefreshedAt(1_800_000_000_000);
-assert.equal(collapsedView.title, `${content.title} · [${refreshTime}]`);
+provider.setUsageRefreshedAt(1_800_000_000_000);
+assert.equal(collapsedView.title, `${content.title}[${refreshTime}/5m]`);
 const nextAccount = buildQuotaStatusBarContent({ ...usage, email: "second@example.com" });
 provider.setQuotaTitle(nextAccount.title);
-assert.equal(collapsedView.title, `${nextAccount.title} · [${refreshTime}]`);
-assert.doesNotMatch(collapsedView.title, /· first ·/);
+assert.equal(collapsedView.title, `${nextAccount.title}[${refreshTime}/5m]`);
+assert.doesNotMatch(collapsedView.title, /first\| /);
 
 const threadId = "019f8104-194c-74f1-8c4c-9cefe5bfc4d0";
 assert.equal(codexIdeThreadUri("openai.chatgpt", threadId), `vscode://openai.chatgpt/local/${threadId}`);

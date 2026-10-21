@@ -6,9 +6,15 @@ export interface QuotaStatusBarContent {
   title: string;
 }
 
-export function formatManagerViewTitle(quotaTitle: string, listRefreshedAt?: number): string {
-  const date = validDate(listRefreshedAt);
-  return `${quotaTitle} · [${date ? clockTime(date) : "--:--"}]`;
+export const ACCOUNT_USAGE_REFRESH_MINUTES = 5;
+
+export function formatQuotaRefreshTime(refreshedAt?: number): string {
+  const date = validDate(refreshedAt);
+  return `[${date ? clockTime(date) : "--:--"}/${ACCOUNT_USAGE_REFRESH_MINUTES}m]`;
+}
+
+export function formatManagerViewTitle(quotaTitle: string, refreshedAt?: number): string {
+  return `${quotaTitle}${formatQuotaRefreshTime(refreshedAt)}`;
 }
 
 function validDate(value?: number): Date | undefined {
@@ -68,9 +74,9 @@ export function formatAccountQuota(buckets: UsageBucket[], now = Date.now()): st
   const summary = (kind: QuotaWindow["kind"], label: string): string => {
     const window = windows.filter(item => item.kind === kind)
       .sort((left, right) => left.remainingPercent - right.remainingPercent)[0];
-    return `${label} ${window ? `${window.remainingPercent}%` : "--"} (${resetTime(window?.resetsAt, now)})`;
+    return `${label} ${window ? `${window.remainingPercent}%` : "--"} ${resetTime(window?.resetsAt, now)}`;
   };
-  return `${summary("primary", "5h Left")} · ${summary("secondary", "Wk Left")}`;
+  return `${summary("primary", "5h")} / ${summary("secondary", "7d")}`;
 }
 
 function managerAccountTitle(usage?: UsageSnapshot): string {
@@ -82,9 +88,9 @@ function managerAccountTitle(usage?: UsageSnapshot): string {
   }
   if (usage?.accountStatus === "available" && usage.email?.trim()) {
     const separator = account.lastIndexOf("@");
-    return `Codex 对话管理器 · ${separator > 0 ? account.slice(0, separator) : account}`;
+    return `${separator > 0 ? account.slice(0, separator) : account}| `;
   }
-  return `Codex 对话管理器 · 账户 ${account}`;
+  return `账户 ${account}| `;
 }
 
 export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: number, now = Date.now()): QuotaStatusBarContent {
@@ -93,7 +99,7 @@ export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: 
     return {
       text: "$(sync~spin) Codex 用量",
       tooltip: "正在读取 Codex 配额。点击查看账户用量。",
-      title: `${titlePrefix} · 配额读取中`
+      title: `${titlePrefix}配额读取中`
     };
   }
   if (usage.quotaStatus !== "available") {
@@ -102,7 +108,7 @@ export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: 
     return {
       text: label,
       tooltip: `${usage.quotaMessage || "服务未提供配额数据。"}\n点击查看账户用量。`,
-      title: `${titlePrefix} · ${isError ? "配额错误" : "配额不可用"}`
+      title: `${titlePrefix}${isError ? "配额错误" : "配额不可用"}`
     };
   }
 
@@ -111,7 +117,7 @@ export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: 
     return {
       text: "$(dash) Codex 5小时剩余 -- · 周剩余 --",
       tooltip: "Codex 服务未提供可计算剩余比例的窗口数据；不会将缺失数据显示为 0%。\n点击查看账户用量。",
-      title: `${titlePrefix} · 5h left --（--） · wk left --（--）`
+      title: `${titlePrefix}${formatAccountQuota([], now)}`
     };
   }
 
@@ -119,11 +125,8 @@ export function buildQuotaStatusBarContent(usage?: UsageSnapshot, refreshedAt?: 
     const values = windows.filter(window => window.kind === kind).map(window => window.remainingPercent);
     return values.length ? `${Math.min(...values)}%` : "--";
   };
-  const windowFor = (kind: QuotaWindow["kind"]): QuotaWindow | undefined => windows
-    .filter(window => window.kind === kind)
-    .sort((left, right) => left.remainingPercent - right.remainingPercent)[0];
   const windowSummary = `5小时剩余 ${remainingFor("primary")} · 周剩余 ${remainingFor("secondary")}`;
-  const title = `${titlePrefix} · 5h left ${remainingFor("primary")}（${resetTime(windowFor("primary")?.resetsAt, now)}） · wk left ${remainingFor("secondary")}（${resetTime(windowFor("secondary")?.resetsAt, now)}）`;
+  const title = `${titlePrefix}${formatAccountQuota(usage.buckets, now)}`;
   const tooltip = [
     "Codex 配额剩余比例（状态栏与管理器标题显示五小时和周窗口；以下列出全部配额窗口）",
     ...windows.map(window => `${window.label}：剩余 ${window.remainingPercent}%${window.resetsAt ? ` · 重置 ${new Date(window.resetsAt).toLocaleString()}` : ""}`),

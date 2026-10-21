@@ -133,8 +133,18 @@ async function main() {
     assert.equal(f.backend.quotaCalls.length, 1, 'Reuse live usage for the active account.');
     let state = f.manager.snapshot();
     assert.equal(state.currentId, a.id);
-    assert.match(state.items.find(item => item.id === a.id).quota.text, /5h Left 90%/);
-    assert.match(state.items.find(item => item.id === b.id).quota.text, /5h Left 48%.*Wk Left 75%/);
+    assert.match(state.items.find(item => item.id === a.id).quota.text, /5h 90%/);
+    assert.match(state.items.find(item => item.id === b.id).quota.text, /5h 48%.*7d 75%/);
+    for (const item of state.items) {
+      const checked = new Date(item.quota.checkedAt);
+      const clock = `${String(checked.getHours()).padStart(2, '0')}:${String(checked.getMinutes()).padStart(2, '0')}`;
+      assert.equal(item.quota.refreshText, `[${clock}/5m]`, 'Each row must expose its own quota read clock and interval.');
+    }
+    const previousReadTime = state.currentQuota.checkedAt;
+    const previousRefreshText = state.currentQuota.refreshText;
+    state = f.manager.snapshot();
+    assert.equal(state.currentQuota.checkedAt, previousReadTime);
+    assert.equal(state.currentQuota.refreshText, previousRefreshText, 'Rendering cached data must not advance the read clock.');
     assert.match(await f.secrets.get(`sponge.accounts.${b.id}`), /synthetic-rotated/);
     assert.doesNotMatch(JSON.stringify(state), /synthetic-access|synthetic-refresh|tokens/);
     assert.doesNotMatch(await fs.readFile(path.join(f.storage, 'accounts', 'index.json'), 'utf8'), /quota|synthetic-access|synthetic-refresh/);

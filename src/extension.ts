@@ -7,7 +7,7 @@ import { startSessionListAutoRefresh } from "./autoRefresh";
 import { configuredCliPath, findChatGptBundledCli, findCliOnPath, resolveCliTarget, isRunnableFile } from "./cli";
 import { CodexDataService, shortError } from "./dataService";
 import { codexIdeThreadUri } from "./links";
-import { buildQuotaStatusBarContent } from "./quotaStatusBar";
+import { ACCOUNT_USAGE_REFRESH_MINUTES, buildQuotaStatusBarContent } from "./quotaStatusBar";
 import { SessionManager } from "./sessionManager";
 import { StartupConversation } from "./startupConversation";
 import { ManagerWebviewProvider } from "./view";
@@ -183,7 +183,7 @@ function updateQuotaStatusBar(snapshot: ManagerSnapshot): void {
     quotaStatusBar.tooltip = content.tooltip;
   }
   webviews?.setQuotaTitle(content.title);
-  webviews?.setListRefreshedAt(snapshot.listRefreshedAt);
+  webviews?.setUsageRefreshedAt(usageRefreshedAt);
 }
 
 function sendMessage(text: string, error = false): void {
@@ -488,7 +488,7 @@ export function activate(context: vscode.ExtensionContext): void {
   quotaStatusBar.show();
   context.subscriptions.push(quotaStatusBar);
 
-  const usageRefreshTimer = setInterval(() => { if (!accounts?.snapshot().busy) void refreshAllUsage(); }, 5 * 60_000);
+  const usageRefreshTimer = setInterval(() => { if (!accounts?.snapshot().busy) void refreshAllUsage(); }, ACCOUNT_USAGE_REFRESH_MINUTES * 60_000);
   context.subscriptions.push({ dispose: () => clearInterval(usageRefreshTimer) });
   // Recompute calendar-day reset suffixes even when the next account request fails.
   const titleRefreshTimer = setInterval(() => {

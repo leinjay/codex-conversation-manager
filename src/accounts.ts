@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { join, resolve, dirname, sep } from "node:path";
 import type { AccountQuotaSnapshot, AccountSnapshot, SavedAccount, UsageBucket, UsageSnapshot } from "./types";
-import { formatAccountQuota } from "./quotaStatusBar";
+import { formatAccountQuota, formatQuotaRefreshTime } from "./quotaStatusBar";
 
 interface Secrets {
   get(key: string): PromiseLike<string | undefined>;
@@ -149,13 +149,15 @@ export class AccountManager {
       && emailKey(this.currentUsage.email ?? "") === emailKey(this.currentEmail ?? "") ? {
       status: this.currentUsage.quotaStatus,
       text: this.currentUsage.quotaStatus === "available" ? formatAccountQuota(this.currentUsage.buckets) : undefined,
-      checkedAt: this.currentUsageAt
+      checkedAt: this.currentUsageAt,
+      refreshText: formatQuotaRefreshTime(this.currentUsageAt)
     } : undefined;
     return {
       items: this.index.items.map(item => {
         const quota = this.quotas.get(item.id);
         return { ...item, quota: item.id === currentId ? currentQuota : quota ? {
           status: quota.status, checkedAt: quota.checkedAt,
+          refreshText: formatQuotaRefreshTime(quota.checkedAt),
           text: quota.status === "available" ? formatAccountQuota(quota.buckets) : undefined
         } : undefined };
       }),

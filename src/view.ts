@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import type { ManagerSnapshot } from "./types";
-import { buildQuotaStatusBarContent, formatManagerViewTitle } from "./quotaStatusBar";
+import { buildQuotaStatusBarContent, formatManagerViewTitle, formatQuotaRefreshTime } from "./quotaStatusBar";
 
 export interface WebviewMessageHandler {
   (message: Record<string, unknown>, webview: vscode.Webview): void | Promise<void>;
@@ -11,7 +11,7 @@ export class ManagerWebviewProvider implements vscode.WebviewViewProvider {
   private readonly webviews = new Set<vscode.Webview>();
   private readonly views = new Set<vscode.WebviewView>();
   private quotaTitle = buildQuotaStatusBarContent().title;
-  private listRefreshedAt?: number;
+  private usageRefreshedAt?: number;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -37,13 +37,13 @@ export class ManagerWebviewProvider implements vscode.WebviewViewProvider {
     for (const view of this.views) view.title = this.getViewTitle();
   }
 
-  setListRefreshedAt(value?: number): void {
-    this.listRefreshedAt = value;
+  setUsageRefreshedAt(value?: number): void {
+    this.usageRefreshedAt = value;
     for (const view of this.views) view.title = this.getViewTitle();
   }
 
   private getViewTitle(): string {
-    return formatManagerViewTitle(this.quotaTitle, this.listRefreshedAt);
+    return formatManagerViewTitle(this.quotaTitle, this.usageRefreshedAt);
   }
 
   async openPanel(): Promise<void> {
@@ -107,13 +107,13 @@ function getHtml(nonce: string, cspSource: string): string {
     .subtle { font-size: 11px; }
     .header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .header-main { min-width: 0; flex: 1; }
-    .account-list { display: grid; gap: 3px; margin-top: 8px; }
-    .account-row { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 5px 6px; border: 0; background: transparent; color: #999; font-size: 12px; text-align: left; }
-    .account-row.current { color: #fff; font-size: 14px; font-weight: 600; background: #292929; }
+    .account-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; margin-top: 8px; }
+    .account-row { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 5px 6px; border: 0; background: transparent; color: #999; font-size: 12px; text-align: left; font-family: var(--vscode-editor-font-family, monospace); }
+    .account-row.current { color: #fff; font-size: 14px; font-weight: 400; background: #292929; }
     .account-row:disabled { opacity: 1; cursor: default; }
     .account-manage { margin-top: 3px; }
     .account-indicator { flex: 0 0 12px; }
-    .account-row-content { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; min-width: 0; }
+    .account-row-content { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
     .account-email { overflow-wrap: anywhere; }
     .account-quota { font-variant-numeric: tabular-nums; }
     .tabs { display: flex; gap: 3px; border-bottom: 1px solid var(--vscode-panel-border); margin: 12px -2px 12px; }
@@ -578,6 +578,10 @@ function getHtml(nonce: string, cspSource: string): string {
       $('#accountList').innerHTML = rows.length ? rows.map(row => {
         const current = row.id ? row.id === state?.currentId : true;
         const quota = quotaLabel(row.quota, row);
+        const email = String(row.email || '').trim();
+        const separator = email.lastIndexOf('@');
+        const username = separator > 0 ? email.slice(0, separator) : email;
+        const refresh = row.quota?.refreshText || '${formatQuotaRefreshTime()}';
         const title = row.email + ' · ' + quota
           + (row.quota?.checkedAt ? ' · 上次更新：' + formatDate(row.quota.checkedAt) : '')
           + (current ? ' · 当前 CLI 账户' : ' · 切换会重载窗口，请先结束正在执行的任务');
@@ -586,7 +590,7 @@ function getHtml(nonce: string, cspSource: string): string {
           + ' data-switch-account="' + escapeHtml(row.id) + '" title="' + escapeHtml(title) + '"'
           + (current || state?.busy ? ' disabled' : '') + '><span class="account-indicator" aria-hidden="true">'
           + (current ? '▶' : '') + '</span><span class="account-row-content"><span class="account-email">'
-          + escapeHtml(row.email) + '</span><span class="account-quota">' + escapeHtml(quota) + '</span></span></button>';
+          + escapeHtml(username) + '| </span><span class="account-quota">' + escapeHtml(quota + refresh) + '</span></span></button>';
       }).join('') : '<div class="small-note">尚未保存账户；点击下方“管理账户”保存或添加。</div>';
     }
     function questionExcerpt(text, query) {

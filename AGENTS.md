@@ -9,6 +9,18 @@
 
 ## Change log
 
+### 2026-10-21 — Publish 0.2.34 compact account summaries
+
+- Prepared the 0.2.34 title/account-row formatting, usage refresh clocks, version files, requirements, README, and regression-script changes for commit and push to `origin/main` (`leinjay/codex-conversation-manager`). Kept the untracked local `error.log`, ignored build output, dependencies, and VSIX artifacts outside the commit.
+- `git fetch origin` succeeded and local `main` matched `origin/main` before committing. Reviewed the changed files and diffs; `git diff --check` passed. The implementation checks, synthetic visual previews, package build, and VSIX installation are recorded in the 0.2.34 entry below; no additional test suites, package rebuild, or VSIX installation were performed for this publishing operation.
+
+### 2026-10-20 — 0.2.34: Unify compact account and quota text
+
+- Updated `src/quotaStatusBar.ts`, `src/accounts.ts`, `src/types.ts`, `src/view.ts`, and `src/extension.ts` so the native title and account rows use `username| 5h 71% 21:46 / 7d 96% 16:46+7d[17:48/5m]`. Removed repeated manager-name, Left, dot separators, reset parentheses, and email domains from those summaries; full emails remain in tooltips and account menus. Rows use the editor monospace font and normal weight while retaining current-account arrows/background/white text, gray other accounts, wrapping, and switch handlers. Explicit loading/error/missing states remain.
+- The final clock now tracks current-account usage reads in the title and each account's own checked time in rows; `/5m` exposes the existing usage refresh interval, shared with the timer constant. Unknown timestamps show `[--:--/5m]`; minute-only cached updates do not advance read times. Session-list scheduling remains 15 minutes. Updated FR-01/FR-02/FR-11, acceptance criteria 12/15/16, README, package files to 0.2.34, and affected regression expectations.
+- Verification passed on Windows: `npm.cmd run compile`, `node scripts/check-quota-status-and-links.cjs`, `node scripts/check-webview-script.cjs`, `node scripts/check-accounts.cjs`, `node scripts/check-session-manager.cjs`, and `git diff --check`. Checks cover compact text, unknown timestamps, day/month/year/DST boundaries, collapsed native-title updates, account-row escaping/full-email tooltips, each account's own read clock, and stable timestamps across cached renders. Inspected synthetic headless Chrome previews at 820px and a constrained 364px body; narrow rows wrap. An initial narrow preview was clipped by the headless browser viewport; constrained the preview body to inspect the intended sidebar width and explicitly bounded the account grid columns. Native VS Code rendering, live account switching/network smoke, and unrelated CLI/reset-credit checks were not performed.
+- `npm.cmd run package` succeeded and VS Code CLI installed `codex-conversation-manager-0.2.34.vsix` successfully. VSCE emitted its existing missing-LICENSE warning; VS Code CLI emitted its existing Node `url.parse()` deprecation warning. Rebuilt and reinstalled the final package to include this maintenance entry. Reload an open VS Code window to activate the new summaries.
+
 ### 2026-10-20 — 0.2.33: Preserve workspace filters and restore the first matching conversation
 
 - Renamed the account-list management row and its empty-state guidance to `管理账户` in `src/view.ts`; the existing management menu remains its click target. Updated FR-11, README, and the existing webview label checks.
