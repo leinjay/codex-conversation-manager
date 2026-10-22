@@ -1,0 +1,16 @@
+{
+  "directories": ["src", "cmake", "resources/forms", "resources/commands", "tests"],
+  "files": {
+    "CMakeLists.txt": "CMakeLists.txt.tpl",
+    "src/main.cpp": "main.cpp.tpl",
+    ".gitignore": "gitignore.tpl",
+    "README.md": "README.md.tpl",
+    "cmake/README.md": "cmake.md.tpl",
+    "resources/forms/.gitkeep": "empty.tpl",
+    "resources/commands/.gitkeep": "empty.tpl",
+    "tests/README.md": "tests.md.tpl",
+    ".vscode/settings.json": "settings.json.tpl",
+    ".vscode/extensions.json": "extensions.json.tpl",
+    ".clangd": "clangd.tpl"
+  }
+}

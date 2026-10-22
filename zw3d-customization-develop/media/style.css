@@ -1,0 +1,125 @@
+:root {
+  color-scheme: light dark;
+  --zw-body-size: max(13px, var(--vscode-font-size, 13px));
+  --zw-heading-size: max(16px, calc(var(--vscode-font-size, 13px) + 3px));
+  --zw-action-size: max(14px, calc(var(--vscode-font-size, 13px) + 1px));
+  --zw-caption-size: max(12px, calc(var(--vscode-font-size, 13px) - 1px));
+  --zw-border: var(--vscode-widget-border, var(--vscode-panel-border, #555));
+  --zw-secondary: var(--vscode-button-secondaryBackground, var(--vscode-input-background, #2d2d30));
+  --zw-secondary-text: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); font-size: var(--zw-body-size); line-height: 1.5; }
+main { padding: 14px 16px 16px; }
+h1, h2, p { margin-top: 0; }
+h1 { font-size: 21px; line-height: 1.2; font-weight: 600; margin-bottom: 4px; }
+h2 { font-size: var(--zw-heading-size); font-weight: 600; margin: 24px 0 14px; }
+button, input { font: inherit; }
+button { padding: 8px 12px; border: 1px solid transparent; border-radius: 5px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); cursor: pointer; }
+button:hover { background: var(--vscode-button-hoverBackground); }
+button:disabled { opacity: .65; cursor: default; }
+button:focus-visible, input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.workbench-header { padding-bottom: 12px; border-bottom: 1px solid var(--zw-border); }
+.brand { display: flex; align-items: center; gap: 12px; }
+.badge { flex: 0 0 40px; height: 40px; border: 1px solid var(--vscode-descriptionForeground); display: grid; place-items: center; font-weight: 700; font-size: 15px; border-radius: 8px; }
+.brand-subtitle { font-size: var(--zw-body-size); margin: 0; }
+.muted, .hint, .intro { color: var(--vscode-descriptionForeground); }
+.status { display: flex; gap: 8px; align-items: baseline; margin-top: 9px; color: var(--vscode-descriptionForeground); font-size: var(--zw-caption-size); overflow-wrap: anywhere; }
+.dot { flex: 0 0 6px; height: 6px; align-self: start; margin-top: 6px; border-radius: 50%; background: var(--vscode-testing-iconPassed, #73a875); }
+.dot.working { background: var(--vscode-progressBar-background); }
+section { margin-top: 12px; }
+.section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.section-label { font-size: var(--zw-heading-size); line-height: 1.5; font-weight: 600; color: var(--vscode-foreground); margin: 0; letter-spacing: 0; }
+.build-heading { flex-wrap: nowrap; gap: 6px; }
+.build-heading .section-label { min-width: 0; }
+.build-directory { margin-left: auto; flex-shrink: 0; color: var(--vscode-descriptionForeground); font-size: var(--zw-caption-size); }
+.project { border: 1px solid var(--zw-border); border-radius: 6px; padding: 8px 12px; }
+.project-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.project-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0; }
+.section-tools { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.icon-button { display: inline-flex; flex: 0 0 30px; align-items: center; justify-content: center; width: 30px; min-width: 30px; height: 30px; padding: 5px; border: 1px solid transparent; background: transparent; color: var(--vscode-foreground); }
+.icon-button svg { display: block; flex: 0 0 18px; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.icon-button:hover { background: var(--vscode-list-hoverBackground, var(--zw-secondary)); }
+.icon-button:disabled:hover { background: transparent; }
+.project strong { min-width: 0; overflow-wrap: anywhere; font-size: var(--zw-heading-size); font-weight: 600; }
+.tag { font-size: var(--zw-caption-size); line-height: 1.5; padding: 1px 6px; border-radius: 4px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.path { overflow-wrap: anywhere; line-height: 1.6; font-size: var(--zw-caption-size); margin: 8px 0; }
+.project-commands { border-top: 1px solid var(--zw-border); margin-top: 8px; padding-top: 8px; font-size: var(--zw-caption-size); }
+.project-command-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.project-command-list code { max-width: 100%; overflow-wrap: anywhere; border-radius: 4px; padding: 2px 6px; background: var(--vscode-textCodeBlock-background); color: var(--vscode-foreground); }
+.project-commands small { display: block; margin-top: 6px; font-size: var(--zw-caption-size); }
+.section-card, .file-context-card { padding: 8px 12px; border: 1px solid var(--zw-border); border-radius: 6px; }
+.file-context-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.file-name { display: block; min-width: 0; font-size: var(--zw-action-size); font-weight: 600; overflow-wrap: anywhere; }
+.file-context .path { margin: 4px 0 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+h3.context-label { margin: 0; color: var(--vscode-foreground); font-size: var(--zw-action-size); line-height: 1.5; font-weight: 600; }
+.related-ui { margin-top: 8px; }
+.related-ui-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; margin-top: 5px; }
+.related-ui-name { flex: 0 1 auto; min-width: 0; max-width: 100%; font-size: var(--zw-body-size); overflow-wrap: anywhere; }
+.designer-button { flex: 0 0 auto; max-width: 100%; font-size: var(--zw-body-size); }
+.plugin-hints { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--zw-border); }
+.plugin-hint-values { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; font-size: var(--zw-body-size); }
+.plugin-hint-values > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.plugin-hint-values code { padding: 2px 6px; border-radius: 4px; background: var(--vscode-textCodeBlock-background); }
+.association-warning { margin: 6px 0 0; color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground)); font-size: var(--zw-caption-size); overflow-wrap: anywhere; }
+.action { display: flex; align-items: flex-start; gap: 10px; text-align: left; width: 100%; min-width: 0; min-height: 60px; padding: 10px 12px; border: 1px solid var(--zw-border); background: var(--zw-secondary); color: var(--zw-secondary-text); }
+.action-icon { flex: 0 0 18px; width: 18px; height: 18px; margin-top: 2px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.action-content { display: block; min-width: 0; overflow-wrap: anywhere; }
+.action:hover, .secondary:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground, var(--zw-secondary))); border-color: var(--vscode-focusBorder); }
+.action strong, .action small { display: block; }
+.action strong { font-size: var(--zw-action-size); line-height: 1.5; font-weight: 600; }
+.action small { margin-top: 3px; font-size: var(--zw-caption-size); line-height: 1.5; }
+.action:disabled { opacity: 1; color: var(--vscode-descriptionForeground); border-style: dashed; cursor: default; }
+.action:disabled:hover { background: var(--zw-secondary); border-color: var(--zw-border); }
+.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.build-actions > :last-child { grid-column: 1 / -1; }
+.action-stack { display: grid; gap: 6px; }
+.hint { font-size: var(--zw-caption-size); line-height: 1.7; margin: 10px 0 0; overflow-wrap: anywhere; }
+.hint code { color: var(--vscode-foreground); background: var(--vscode-textCodeBlock-background); border-radius: 3px; padding: 1px 4px; }
+.empty { border: 1px dashed var(--zw-border); border-radius: 6px; padding: 14px 12px; margin-bottom: 10px; }
+.empty strong { font-size: var(--zw-action-size); }
+.empty p { font-size: var(--zw-body-size); line-height: 1.7; margin: 8px 0 12px; overflow-wrap: anywhere; }
+.tool-button { min-width: 0; min-height: 34px; padding: 6px 8px; background: transparent; border-color: var(--zw-border); color: var(--vscode-foreground); font-size: var(--zw-body-size); }
+.tool-button:hover { background: var(--vscode-list-hoverBackground, var(--zw-secondary)); }
+.text-button { background: transparent; padding: 2px 0; color: var(--vscode-textLink-foreground); font-size: var(--zw-body-size); }
+.text-button:hover { background: transparent; text-decoration: underline; }
+.cancel { width: 100%; margin-top: 12px; background: var(--zw-secondary); color: var(--zw-secondary-text); }
+.empty button { background: var(--zw-secondary); color: var(--zw-secondary-text); border-color: var(--zw-border); }
+button[data-action].is-selected { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
+button[data-action].is-selected:hover { background: var(--vscode-button-hoverBackground); }
+.version-info { color: var(--vscode-foreground); }
+code { font-family: var(--vscode-editor-font-family); }
+body[data-page="create"] { background: var(--vscode-editor-background); }
+.form-container { max-width: 730px; margin: 20px auto 50px; padding: 0 18px; }
+.eyebrow { color: var(--vscode-descriptionForeground); font-size: var(--zw-caption-size); letter-spacing: 1px; margin-bottom: 13px; }
+.form-container h1 { font-size: 25px; }
+.intro { margin: 12px 0 28px; line-height: 1.8; }
+fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.form-field { margin-bottom: 17px; }
+label { display: block; margin-bottom: 7px; font-weight: 500; }
+.input-row { display: flex; gap: 8px; }
+input { min-width: 0; width: 100%; padding: 9px 10px; border: 1px solid var(--vscode-input-border, var(--zw-border)); border-radius: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
+input::placeholder { color: var(--vscode-input-placeholderForeground); }
+.compile-options-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; }
+.compile-options-row .icon-button { margin-top: 0; }
+.navigation-card .compile-options-row { margin-top: 0; }
+.compile-option { display: flex; flex: 0 1 auto; min-width: 0; align-items: flex-start; gap: 8px; margin: 3px 0 0; font-size: var(--zw-body-size); line-height: 1.6; cursor: pointer; }
+.compile-option input { flex: 0 0 16px; width: 16px; height: 16px; margin: 3px 0 0; padding: 0; accent-color: var(--vscode-button-background); }
+.compile-option span { min-width: 0; overflow-wrap: anywhere; }
+.compile-option-hint { margin-top: 4px; margin-left: 24px; }
+.secondary { background: var(--zw-secondary); color: var(--zw-secondary-text); white-space: nowrap; }
+.form-field small { display: block; font-size: var(--zw-caption-size); margin-top: 6px; line-height: 1.65; }
+.form-heading { display: flex; justify-content: space-between; align-items: center; margin-top: 26px; }
+.form-heading h2 { margin-top: 0; }
+.preview { padding: 14px; background: var(--vscode-textCodeBlock-background); border: 1px solid var(--zw-border); border-radius: 5px; margin-top: 24px; }
+.preview .section-label { display: block; font-size: var(--zw-body-size); margin-bottom: 8px; }
+.preview code { overflow-wrap: anywhere; }
+.structure { color: var(--vscode-descriptionForeground); font-size: var(--zw-caption-size); margin-top: 12px; line-height: 1.8; }
+.form-actions { margin-top: 25px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+#progress { font-size: var(--zw-caption-size); color: var(--vscode-descriptionForeground); }
+#result { margin-top: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.error, .warning { color: var(--vscode-errorForeground); }
+.success { border: 1px solid var(--vscode-testing-iconPassed); border-radius: 5px; padding: 18px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+@media (max-width: 300px) { main { padding: 12px 12px; } .split { grid-template-columns: 1fr; } .build-heading { flex-wrap: wrap; } }
+@media (max-width: 260px) { .section-tools { gap: 2px; } }

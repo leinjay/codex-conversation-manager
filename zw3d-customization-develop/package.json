@@ -1,0 +1,259 @@
+{
+  "name": "zw3d-customization-develop",
+  "displayName": "ZW3D 二次开发",
+  "description": "初始化、编译、部署、运行和 GDB 调试 Linux 中望 3D 插件。",
+  "version": "0.1.17",
+  "publisher": "sponge",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers",
+    "Other"
+  ],
+  "keywords": [
+    "ZW3D",
+    "中望",
+    "CMake",
+    "GDB"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leinjay/vscode-extensions.git",
+    "directory": "zw3d-customization-develop"
+  },
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "extensionDependencies": [
+    "ms-vscode.cpptools",
+    "llvm-vs-code-extensions.vscode-clangd"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "此扩展执行 CMake、Git、GDB 和本地 ZW3D 程序。"
+    },
+    "virtualWorkspaces": false
+  },
+  "activationEvents": [
+    "onView:zw3d.dashboard",
+    "workspaceContains:.zw3d/project.json",
+    "workspaceContains:CMakeLists.txt"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zw3d",
+          "title": "ZW3D 二次开发",
+          "icon": "media/zw3d.svg"
+        }
+      ]
+    },
+    "views": {
+      "zw3d": [
+        {
+          "id": "zw3d.dashboard",
+          "name": "开发工作台",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "zw3d.openRelatedUi",
+        "title": "在 Qt Designer 打开关联 UI",
+        "category": "ZW3D"
+      },
+      {
+        "command": "zw3d.inspectUiContext",
+        "title": "查看关联 UI",
+        "category": "ZW3D"
+      },
+      {
+        "command": "zw3d.createProject",
+        "title": "初始化项目",
+        "category": "ZW3D",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "zw3d.importProject",
+        "title": "接入现有项目",
+        "category": "ZW3D",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "zw3d.build",
+        "title": "编译",
+        "category": "ZW3D",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "zw3d.rebuild",
+        "title": "重新生成",
+        "category": "ZW3D",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "zw3d.run",
+        "title": "编译并运行",
+        "category": "ZW3D",
+        "icon": "$(play)"
+      },
+      {
+        "command": "zw3d.debug",
+        "title": "编译并调试",
+        "category": "ZW3D",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "zw3d.configure",
+        "title": "编辑当前项目配置",
+        "category": "ZW3D",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "zw3d.reconfigureProject",
+        "title": "重新配置项目",
+        "category": "ZW3D",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "zw3d.configureClangd",
+        "title": "配置 clangd 与编译数据库",
+        "category": "ZW3D",
+        "icon": "$(code)"
+      },
+      {
+        "command": "zw3d.editTemplate",
+        "title": "编辑项目模板",
+        "category": "ZW3D"
+      },
+      {
+        "command": "zw3d.detect",
+        "title": "检测开发环境",
+        "category": "ZW3D",
+        "icon": "$(search)"
+      },
+      {
+        "command": "zw3d.detectProject",
+        "title": "检测并初始化当前项目",
+        "category": "ZW3D",
+        "icon": "$(search)"
+      },
+      {
+        "command": "zw3d.selectProject",
+        "title": "选择当前项目",
+        "category": "ZW3D"
+      },
+      {
+        "command": "zw3d.showOutput",
+        "title": "显示构建日志",
+        "category": "ZW3D",
+        "icon": "$(output)"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "zw3d.inspectUiContext",
+          "when": "resourceScheme == file",
+          "group": "navigation@90"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "zw3d.createProject",
+          "when": "view == zw3d.dashboard",
+          "group": "navigation@1"
+        },
+        {
+          "command": "zw3d.showOutput",
+          "when": "view == zw3d.dashboard",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ZW3D 二次开发",
+      "properties": {
+        "zw3d.designerPath": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "本地 Qt Designer 可执行文件或启动脚本。留空检测 PATH、~/software/qt5/designer 及常见 Qt 安装目录；仅复用已有工具，不下载或安装。优先使用带中望自定义控件的 Qt Designer。"
+        },
+        "zw3d.autoRefreshCompileCommands": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "description": "新增 C/C++ 源码文件时，先用临时 CMake 配置确认其属于当前插件或构建依赖，再重新配置正式构建目录以更新 compile_commands.json。不自动添加源码到 CMake，不编译。未纳入目标的文件等待后续 CMake 修改再检查。"
+        },
+        "zw3d.autoInitializeProjects": {
+          "type": "boolean",
+          "default": true,
+          "description": "自动检测已打开的 CMake 工程，识别到中望 SDK 动态库项目后生成 .zw3d/project.json 并启用构建和调试。已有配置保持不变。"
+        },
+        "zw3d.cmakePath": {
+          "type": "string",
+          "default": "",
+          "description": "CMake 可执行文件；留空从 PATH 检测。"
+        },
+        "zw3d.cxxPath": {
+          "type": "string",
+          "default": "",
+          "description": "g++ 可执行文件；留空从 PATH 检测。"
+        },
+        "zw3d.clangdPath": {
+          "type": "string",
+          "default": "",
+          "description": "已有 clangd 可执行文件路径；留空从 PATH 检测。不会安装系统或用户级 clangd 工具。"
+        },
+        "zw3d.gdbPath": {
+          "type": "string",
+          "default": "",
+          "description": "GDB 可执行文件；留空从 PATH 检测。"
+        },
+        "zw3d.installRoot": {
+          "type": "string",
+          "default": "",
+          "description": "ZW3D 安装目录（包含 files/），或直接填写 files/。留空自动检测。"
+        },
+        "zw3d.templateDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "包含 template.json 的自定义模板目录；留空使用内置模板。"
+        },
+        "zw3d.defaultRemote": {
+          "type": "string",
+          "default": "",
+          "description": "新项目表单的默认 Git 远程地址。仅在确认创建且填写远程地址后提交并推送。"
+        }
+      }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "**/.zw3d/project.json",
+        "url": "./schemas/project.schema.json"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "test": "npm run compile && node --test test/*.test.cjs",
+    "test:sdk": "npm run compile && node scripts/smoke-sdk.cjs",
+    "test:vscode": "npm run compile && node scripts/smoke-vscode.cjs",
+    "package": "npm run compile && vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.9.0"
+  }
+}

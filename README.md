@@ -7,6 +7,7 @@ Collection of VS Code extensions maintained in this repository.
 | Extension | Description |
 | --- | --- |
 | [Codex Conversation Manager](codex-conversation-manager/README.md) | Browse local Codex conversations and Codex Cloud tasks, and manage saved accounts. |
+| [ZW3D 二次开发](zw3d-customization-develop/README.md) | 初始化、编译、部署、运行和 GDB 调试 Linux 中望 3D 插件。 |
 
 ## Build Codex Conversation Manager
 

@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ZW3D 项目配置",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "projectName", "libraryName", "cmakePath", "cxxPath", "gdbPath", "zw3dRoot", "buildDirectory", "buildType", "executable", "apilibs", "args", "environment", "cmakeArgs"],
+  "properties": {
+    "version": { "const": 1 },
+    "commandHint": { "type": "string", "description": "侧栏和运行日志中的测试命令，例如 !OriginBox 或 ~HelloZW3D；空字符串隐藏具体命令。省略时兼容初始模板命令。" },
+    "projectName": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$", "description": "项目及初始命令名称。更改时同步修改源码和 CMakeLists.txt。" },
+    "libraryName": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$", "description": "动态库名，不带 lib 前缀和 .so。必须与源码的 Init/Exit 导出前缀匹配。" },
+    "cmakePath": { "type": "string", "minLength": 1 },
+    "cxxPath": { "type": "string", "minLength": 1 },
+    "gdbPath": { "type": "string", "description": "GDB 路径；留空时调试从 PATH 检测。" },
+    "zw3dRoot": { "type": "string", "minLength": 1, "description": "包含 files 的安装根目录，或直接为 files 目录。" },
+    "buildDirectory": { "type": "string", "default": "build_debug", "minLength": 1, "description": "当前项目内的相对构建目录，不允许 ..。Release/Debug 分区操作分别设置 build_release/build_debug。" },
+    "buildType": { "enum": ["Debug", "RelWithDebInfo", "Release"], "default": "Debug" },
+    "executable": { "type": "string", "minLength": 1, "description": "实际 ZW3D ELF 程序（files/zw3d），不能填写启动 shell 脚本。" },
+    "apilibs": { "type": "string", "minLength": 1, "description": "部署目录，默认为 files/apilibs。支持绝对路径或相对项目的路径。自定义目录必须属于 ZW3D 的插件搜索位置。" },
+    "args": { "type": "array", "items": { "type": "string" }, "default": [], "description": "传递给 ZW3D 的启动参数，每个数组元素为一个独立参数。" },
+    "environment": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }, "additionalProperties": { "type": "string" }, "default": {}, "description": "覆盖 ZW3D 运行环境，不修改系统或用户环境。" },
+    "cmakeArgs": { "type": "array", "items": { "type": "string" }, "default": [], "description": "额外 CMake 配置参数，例如 toolchain 文件。核心编译器、库名和构建类型参数由扩展最后添加。" },
+    "cmakeArgsByProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Release/Debug 分别使用的额外单个 CMake 参数。",
+      "properties": {
+        "Release": { "type": "string", "minLength": 1, "description": "作为单个参数附加到 Release 配置命令。" },
+        "Debug": { "type": "string", "minLength": 1, "description": "作为单个参数附加到 Debug 配置命令。" }
+      }
+    }
+  }
+}
