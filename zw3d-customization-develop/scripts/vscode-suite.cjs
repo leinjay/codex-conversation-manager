@@ -40,18 +40,62 @@ exports.run = async () => {
     assert.equal(await cdp.evaluate(dashboard, 'Boolean(document.querySelector(".compile-options-row [data-action=clangd]"))'), true);
     assert.equal(await cdp.evaluate(dashboard, 'document.querySelector("#project-heading").closest("section").parentElement === document.querySelector("#file-heading").closest("section").parentElement'), true);
     console.log('PASS: project/file peer sections, contextual icon actions and no footer tool row');
+    const inheritedLibraries = process.env.LD_LIBRARY_PATH;
+    const healthSdk = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'zw3d-health-ui-'));
+    const healthFiles = path.join(healthSdk, 'files');
+    await fs.mkdir(path.join(healthFiles, 'api/inc'), { recursive: true });
+    await fs.mkdir(path.join(healthFiles, 'ZWMold/Bin'), { recursive: true });
+    await fs.writeFile(path.join(healthFiles, 'api/inc/zwapi_command.h'), '');
+    await fs.writeFile(path.join(healthFiles, 'libZW3D.so'), '');
+    await fs.writeFile(path.join(healthFiles, 'zw3d'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const healthPlugin = path.join(root, 'build_debug/plugin/EnvironmentProbe.so');
+    await fs.mkdir(path.dirname(healthPlugin), { recursive: true });
+    const probeSource = path.join(healthSdk, 'probe.cpp');
+    await fs.writeFile(probeSource, 'extern "C" int environment_probe(){return 0;}\n');
+    await require('../dist/process').runProcess(JSON.parse(original).cxxPath, ['-shared', '-fPIC', probeSource, '-o', healthPlugin]);
+    const hostSource = path.join(healthSdk, 'host.cpp');
+    await fs.writeFile(hostSource, 'int main(){return 0;}\n');
+    try {
+      process.env.LD_LIBRARY_PATH = '';
+      await fs.writeFile(configPath, JSON.stringify({ ...JSON.parse(original), zw3dRoot: healthSdk, cmakePath: '/missing/cmake', cxxPath: '/missing/g++', gdbPath: '/missing/gdb', executable: '/missing/zw3d', designerPath: '/missing/designer' }));
+      await vscode.commands.executeCommand('zw3d.detect');
+      await cdp.until(dashboard, 'document.querySelectorAll(".environment-status .dot.error").length === 2');
+      const messages = await cdp.evaluate(dashboard, '[...document.querySelectorAll(".environment-status .status-text")].map(node => node.textContent)');
+      assert.deepEqual(messages, ['缺少编译工具 CMake、g++、GDB', '缺少客户端工具 ZW3D、Qt Designer']);
+      await cdp.evaluate(dashboard, 'document.querySelector(".environment-status [data-action=environmentConfigure]").click()');
+      for (let attempt = 0; attempt < 100 && vscode.window.activeTextEditor?.document.uri.fsPath !== configPath; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
+      assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, configPath);
+      process.env.LD_LIBRARY_PATH = '';
+      await require('../dist/process').runProcess(JSON.parse(original).cxxPath, [hostSource, '-o', path.join(healthFiles, 'zw3d')]);
+      await fs.writeFile(configPath, JSON.stringify({ ...JSON.parse(original), libraryName:'EnvironmentProbe', buildDirectory:'build_debug', apilibs:path.join(healthFiles,'apilibs'), zw3dRoot: healthSdk, executable: path.join(healthFiles, 'zw3d'), designerPath: process.execPath }));
+      await vscode.commands.executeCommand('zw3d.detect');
+      await cdp.until(dashboard, 'document.querySelector(".status").textContent === "准备就绪" && document.querySelectorAll(".environment-status").length === 0');
+      assert.equal(process.env.LD_LIBRARY_PATH, '', 'An absent inherited variable must not fail a healthy actual runtime');
+      console.log('PASS: successful environment checks show 准备就绪 and clear all problem rows');
+    } finally {
+      if (inheritedLibraries === undefined) delete process.env.LD_LIBRARY_PATH; else process.env.LD_LIBRARY_PATH = inheritedLibraries;
+      await fs.writeFile(configPath, original);
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await fs.rm(healthSdk, { recursive: true, force: true });
+      await fs.rm(healthPlugin, { force: true });
+    }
+    await vscode.commands.executeCommand('zw3d.detect');
+    await vscode.commands.executeCommand('zw3d.configureClangd');
+    console.log('PASS: missing compiler/client status, configuration repair and actual runtime dependency checks independent of inherited LD_LIBRARY_PATH');
     assert.equal(await cdp.evaluate(dashboard, 'document.querySelector("[data-action=buildDebug]").disabled'), false);
     assert.equal(await cdp.evaluate(dashboard, 'document.querySelector("[data-action=clangd]").getAttribute("aria-pressed")'), 'true');
-    await cdp.evaluate(dashboard, 'document.querySelector("[data-action=buildDebug]").click()');
+    await cdp.evaluate(dashboard, 'document.querySelector("[data-build-profile=Debug]").click(); document.querySelector("[data-action=buildDebug]").click()');
     await cdp.until(dashboard, 'document.querySelector("[data-action=buildDebug]").classList.contains("is-selected") && !document.querySelector("[data-action=buildDebug]").disabled && document.querySelector(".status").textContent.includes("编译完成")');
     assert.equal(await cdp.evaluate(dashboard, 'document.querySelector("[data-action=runDebug]").classList.contains("is-selected")'), false);
     assert.deepEqual(await cdp.evaluate(dashboard, '[...document.querySelectorAll(".build-heading")].map(node => [node.querySelector("h2").textContent, node.querySelector(".build-directory").textContent])'),
-      [['Release 构建', 'build_release'], ['Debug 构建', 'build_debug']]);
+      [['构建', 'build_debug']]);
+    assert.deepEqual(await cdp.evaluate(dashboard, '[...document.querySelectorAll("[role=tab]")].map(node => node.textContent)'), ['Debug', 'Release']);
     assert.equal(await cdp.evaluate(dashboard, 'Boolean(document.querySelector("[aria-labelledby=launch-heading], [data-action=debug]"))'), false);
     const navigationDatabase = path.join(root, 'build_clangd/compile_commands.json');
     const navigationBefore = await fs.readFile(navigationDatabase, 'utf8');
     const navigationStamp = (await fs.stat(navigationDatabase)).mtimeMs;
     for (const profile of ['Release', 'Debug']) {
+      await cdp.evaluate(dashboard, `document.querySelector('[data-build-profile=${profile}]').click()`);
       for (const action of ['build', 'run', 'rebuild']) {
         const selector = `[data-action=${action}${profile}]`;
         await cdp.until(dashboard, `!document.querySelector('${selector}').disabled`);
@@ -72,7 +116,7 @@ exports.run = async () => {
     assert.equal(await fs.stat(path.join(root, 'build_clangd/plugin/DebugPlugin.so')).then(() => true, () => false), false);
     console.log('PASS: six profile buttons configure isolated directories, run matching plugins and preserve the independent clangd database');
     await cdp.evaluate(dashboard, 'document.querySelector("[data-action=detect]").click()');
-    await cdp.until(dashboard, 'document.querySelector(".status").textContent.includes("开发环境检测通过")');
+    await cdp.until(dashboard, 'document.querySelector(".status").textContent.includes("开发环境检测") || document.querySelector(".status").textContent === "准备就绪"');
     assert.equal(await cdp.evaluate(dashboard, 'document.querySelector("[data-action=detect]").getAttribute("aria-pressed")'), 'true');
     assert.equal(await cdp.evaluate(dashboard, 'Boolean(document.querySelector(".environment, [aria-labelledby=launch-heading] .hint"))'), false);
     console.log('PASS: action highlighting and detection work without the removed environment panel or command hint');
@@ -99,7 +143,8 @@ exports.run = async () => {
       await fs.writeFile(designer, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2)));\n`, { mode: 0o755 });
       await contextSettings().update('designerPath', designer, vscode.ConfigurationTarget.WorkspaceFolder);
       await vscode.window.showTextDocument(vscode.Uri.file(fixtureSource));
-      await cdp.until(dashboard, 'document.querySelector(".file-name")?.textContent === "FilletBox.cpp" && document.querySelector(".related-ui-name").textContent.includes("FilletBox.ui")');
+      await cdp.until(dashboard, 'document.querySelector(".file-context-path")?.textContent.endsWith("/FilletBox.cpp") && document.querySelector(".plugin-hints").textContent.includes("FilletBox.ui")');
+      assert.equal(await cdp.evaluate(dashboard, 'Boolean(document.querySelector(".file-name, .related-ui"))'), false);
       assert.match(await cdp.evaluate(dashboard, 'document.querySelector(".plugin-hints").textContent'), /DebugPlugin\.so.*!FilletBox.*~ShowFilletBox/);
       await cdp.until(dashboard, 'document.querySelector(".project-commands").textContent.includes("!FilletBox") && document.querySelector(".project-commands").textContent.includes("~ShowFilletBox")');
       const document = await vscode.workspace.openTextDocument(vscode.Uri.file(fixtureSource));
@@ -110,16 +155,9 @@ exports.run = async () => {
       await new Promise(resolve => setTimeout(resolve, 650));
       assert.equal(await cdp.evaluate(dashboard, 'document.querySelector(".project-commands").textContent.includes("~ShowFilletBoxSaved")'), false);
       assert.equal(await document.save(), true);
-      await cdp.until(dashboard, 'document.querySelector(".project-commands").textContent.includes("~ShowFilletBoxSaved") && ![...document.querySelectorAll(".project-command-list code")].some(node => node.textContent === "~ShowFilletBox")');
+      await cdp.until(dashboard, 'document.querySelector(".project-commands").textContent.includes("~ShowFilletBoxSaved") && ![...document.querySelectorAll(".project-command-list code")].some(node => node.textContent.endsWith(":~ShowFilletBox"))');
       console.log('PASS: project-level !/~ list refreshes after source save, excludes unsaved changes, and removes stale command names');
-      await cdp.evaluate(dashboard, 'document.querySelector("[data-action=designer]").click()');
-      for (let attempt = 0; attempt < 100; attempt++) {
-        const { result } = await cdp.send('Runtime.evaluate', { expression: 'document.querySelector(".quick-input-widget")?.textContent', returnByValue: true }, cdp.pageSession);
-        if (result.value?.includes('选择关联 UI')) break;
-        if (attempt === 99) throw new Error('Ranked UI picker was not shown');
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
-      await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+      await cdp.evaluate(dashboard, 'document.querySelector(".plugin-hints [data-ui-file]").click()');
       await waitCapture(fixtureUi);
       // Selecting a different candidate must launch that file, rather than always the first one.
       const opening = vscode.commands.executeCommand('zw3d.openRelatedUi');
@@ -142,7 +180,7 @@ exports.run = async () => {
       await vscode.commands.executeCommand('zw3d.inspectUiContext', vscode.Uri.file(fixture));
       await cdp.until(dashboard, 'document.querySelector(".file-context-heading h2").textContent === "当前文件夹"');
       await vscode.window.showTextDocument(vscode.Uri.file(fixtureUi));
-      await cdp.until(dashboard, 'document.querySelector(".file-name").textContent === "FilletBox.ui"');
+      await cdp.until(dashboard, 'document.querySelector(".file-context-path").textContent.endsWith("/FilletBox.ui")');
       await fs.writeFile(path.resolve(__dirname, '../.test-artifacts/ui-context-dashboard.png'), Buffer.from(await cdp.screenshot(), 'base64'));
       console.log('PASS: active-file/folder UI card, ranked candidate picker, chosen UI passed literally to Designer, plugin/command hints and environment entry');
     } finally {
@@ -150,10 +188,10 @@ exports.run = async () => {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       await fs.rm(fixture, { recursive: true, force: true });
     }
-    assert.match(await cdp.evaluate(dashboard, 'document.querySelector("[data-action=runDebug] small").textContent'), /增量编译/);
-    assert.match(await cdp.evaluate(dashboard, 'document.querySelector("[data-action=runRelease] small").textContent'), /增量编译/);
+    assert.match(await cdp.evaluate(dashboard, 'document.querySelector("#debug-heading").closest("section").querySelector("[data-action=runDebug] small, .run-size small").textContent'), /增量编译/);
+    assert.match(await cdp.evaluate(dashboard, 'document.querySelector("#release-heading").closest("section").querySelector("[data-action=runRelease] small, .run-size small").textContent'), /增量编译/);
     const autoConfig = () => vscode.workspace.getConfiguration('zw3d', vscode.Uri.file(root));
-    assert.equal(autoConfig().get('autoRefreshCompileCommands'), false);
+    const previousAutoRefresh = autoConfig().inspect('autoRefreshCompileCommands')?.workspaceFolderValue;
     const cmakeFile = path.join(root, 'CMakeLists.txt');
     const originalCmake = await fs.readFile(cmakeFile, 'utf8');
     const unused = path.join(root, 'auto-unused.cpp');
@@ -168,9 +206,9 @@ exports.run = async () => {
       throw new Error(`New participating source was not exported: ${file}`);
     };
     try {
-      await cdp.evaluate(dashboard, 'document.getElementById("auto-compile-commands").click()');
-      for (let attempt = 0; attempt < 100 && !autoConfig().get('autoRefreshCompileCommands'); attempt++) await new Promise(resolve => setTimeout(resolve, 50));
+      await autoConfig().update('autoRefreshCompileCommands', undefined, vscode.ConfigurationTarget.WorkspaceFolder);
       assert.equal(autoConfig().get('autoRefreshCompileCommands'), true);
+      await cdp.until(dashboard, 'document.getElementById("auto-compile-commands").checked && !document.getElementById("auto-compile-commands").disabled');
       const before = await fs.readFile(database, 'utf8');
       const stamp = (await fs.stat(database)).mtimeMs;
       await fs.writeFile(unused, '// deliberately outside the src glob\n');
@@ -191,7 +229,7 @@ exports.run = async () => {
       assert.equal((await fs.readFile(database, 'utf8')).includes(disabledFile), false);
       console.log('PASS: incremental labels, real sidebar checkbox, excluded source leaves database untouched, CMake enlistment and glob source auto-refresh, disabling stops refresh');
     } finally {
-      await autoConfig().update('autoRefreshCompileCommands', false, vscode.ConfigurationTarget.WorkspaceFolder);
+      await autoConfig().update('autoRefreshCompileCommands', previousAutoRefresh, vscode.ConfigurationTarget.WorkspaceFolder);
       await fs.writeFile(cmakeFile, originalCmake);
       for (const file of [unused, included, disabledFile]) await fs.rm(file, { force: true });
       await vscode.commands.executeCommand('zw3d.configureClangd');

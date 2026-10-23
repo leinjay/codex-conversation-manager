@@ -20,6 +20,7 @@ export interface ProjectConfig extends Tools {
     cmakeArgs: string[];
     cmakeArgsByProfile?: Partial<Record<BuildProfile, string>>;
     commandHint?: string;
+    designerPath?: string;
 }
 export interface Project { root: string; config: ProjectConfig }
 export const buildDirectories: Record<BuildProfile, string> = { Release: 'build_release', Debug: 'build_debug' };
@@ -129,6 +130,7 @@ export function validateConfig(raw: unknown, root: string): ProjectConfig {
         }
     }
     if (data.commandHint !== undefined) { string(data.commandHint, 'commandHint', true); }
+    if (data.designerPath !== undefined) { string(data.designerPath, 'designerPath', true); }
     for (const [key, value] of Object.entries(object(data.environment, 'environment'))) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) { throw new Error(`无效的环境变量名：${key}`); }
         string(value, `environment.${key}`, true);
@@ -283,14 +285,20 @@ export async function runtime(project: Project): Promise<{ program: string; cwd:
     const files = await zw3dFiles(project.config.zw3dRoot);
     const program = path.isAbsolute(project.config.executable) ? project.config.executable : path.resolve(project.root, project.config.executable);
     if (!await findExecutable(program)) { throw new Error(`ZW3D 程序不可执行：${program}`); }
+    const env = await runtimeEnvironment(files, project.config.environment, [
+        path.resolve(project.root, project.config.apilibs), path.join(project.root, project.config.buildDirectory, 'plugin')
+    ]);
+    return { program, cwd: files, env };
+}
+export async function runtimeEnvironment(files: string, overrides: Record<string, string> = {}, pluginDirectories: string[] = []): Promise<NodeJS.ProcessEnv> {
     const env = { ...process.env };
-    const libraries = ['', 'lib3rd', 'libqt', 'libqt/plugins/designer', 'xlator', 'xlator/InterOp', 'xlator/InterOp/iop/code/bin', 'xlator/InterOp/acis'];
-    env.LD_LIBRARY_PATH = [...libraries.map(p => path.join(files, p)), env.LD_LIBRARY_PATH].filter(Boolean).join(':');
+    const libraries = ['', 'ZWMold/Bin', 'lib3rd', 'libqt', 'libqt/plugins/designer', 'xlator', 'xlator/InterOp', 'xlator/InterOp/iop/code/bin', 'xlator/InterOp/acis'];
+    env.LD_LIBRARY_PATH = [...new Set([...pluginDirectories, ...libraries.map(p => path.join(files, p)), ...(env.LD_LIBRARY_PATH ?? '').split(':').filter(Boolean)])].join(':');
     const hook = path.join(files, 'libZwCodecHook.so');
     if (await exists(hook)) { env.LD_PRELOAD = [env.LD_PRELOAD, hook].filter(Boolean).join(':'); }
     env.QT_SCREEN_SCALE_FACTORS = '1'; env.SPAIOP_ACCELERATED_VISU_NEW = 'False';
-    Object.assign(env, project.config.environment);
-    return { program, cwd: files, env };
+    Object.assign(env, overrides);
+    return env;
 }
 export async function debugConfiguration(project: Project): Promise<Record<string, unknown>> {
     const { program, cwd, env } = await runtime(project);

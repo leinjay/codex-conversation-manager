@@ -12,6 +12,7 @@
     "cmakePath": { "type": "string", "minLength": 1 },
     "cxxPath": { "type": "string", "minLength": 1 },
     "gdbPath": { "type": "string", "description": "GDB 路径；留空时调试从 PATH 检测。" },
+    "designerPath": { "type": "string", "description": "可选的 Qt Designer 可执行文件或启动脚本；优先于 VS Code zw3d.designerPath 设置。" },
     "zw3dRoot": { "type": "string", "minLength": 1, "description": "包含 files 的安装根目录，或直接为 files 目录。" },
     "buildDirectory": { "type": "string", "default": "build_debug", "minLength": 1, "description": "当前项目内的相对构建目录，不允许 ..。Release/Debug 分区操作分别设置 build_release/build_debug。" },
     "buildType": { "enum": ["Debug", "RelWithDebInfo", "Release"], "default": "Debug" },

@@ -70,13 +70,15 @@ export async function designerVersion(executable: string): Promise<string> {
 }
 
 export async function launchDesigner(executable: string, file: string, log: Log): Promise<ChildProcess> {
-    if (!await findExecutable(executable)) { throw new Error('未找到 Qt Designer，请在设置 zw3d.designerPath 中指定已有的可执行文件或启动脚本。'); }
+    const name = 'Qt Designer';
+    const setting = 'designerPath';
+    if (!await findExecutable(executable)) { throw new Error(`未找到 ${name}，请在设置 zw3d.${setting} 中指定已有的可执行文件或启动脚本。`); }
     if (path.extname(file).toLowerCase() !== '.ui' || !(await fs.stat(file)).isFile()) { throw new Error('关联 UI 已不存在，请重新选择。'); }
     const child = spawn(executable, [file], { cwd: path.dirname(file), shell: false, detached: true, stdio: 'ignore' });
     await new Promise<void>((resolve, reject) => { child.once('error', reject); child.once('spawn', resolve); });
-    child.on('error', error => log(`Qt Designer 启动错误：${error.message}`));
-    child.once('exit', code => { if (code) { log(`Qt Designer 退出码 ${code}，请检查 Qt 运行库和自定义控件插件。`); } });
+    child.on('error', error => log(`${name} 启动错误：${error.message}`));
+    child.once('exit', code => { if (code) { log(`${name} 退出码 ${code}，请检查 Qt 运行库和自定义控件插件。`); } });
     child.unref();
-    log(`已用 Qt Designer 打开 ${file}（PID ${child.pid}）。`);
+    log(`已用 ${name} 打开 ${file}（PID ${child.pid}）。`);
     return child;
 }

@@ -2,7 +2,7 @@
   "name": "zw3d-customization-develop",
   "displayName": "ZW3D 二次开发",
   "description": "初始化、编译、部署、运行和 GDB 调试 Linux 中望 3D 插件。",
-  "version": "0.1.17",
+  "version": "0.1.33",
   "publisher": "sponge",
   "license": "MIT",
   "engines": {
@@ -64,6 +64,11 @@
       ]
     },
     "commands": [
+      {
+        "command": "zw3d.addLibraryPath",
+        "title": "为外部启动的 ZW3D 添加用户动态库路径",
+        "category": "ZW3D"
+      },
       {
         "command": "zw3d.openRelatedUi",
         "title": "在 Qt Designer 打开关联 UI",
@@ -189,7 +194,7 @@
         },
         "zw3d.autoRefreshCompileCommands": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "resource",
           "description": "新增 C/C++ 源码文件时，先用临时 CMake 配置确认其属于当前插件或构建依赖，再重新配置正式构建目录以更新 compile_commands.json。不自动添加源码到 CMake，不编译。未纳入目标的文件等待后续 CMake 修改再检查。"
         },

@@ -3,6 +3,10 @@ import * as path from 'node:path';
 import type { ProjectConfig } from './core';
 
 export interface ResourceFile { file: string; text: string }
+export interface PluginEntry {
+    library?: string; command?: string;
+    ui?: { file: string; relative: string };
+}
 export interface UiCandidate {
     file: string; relative: string; score: number; reasons: string[]; warnings: string[];
     commands: string[]; libraries: string[];
@@ -10,6 +14,58 @@ export interface UiCandidate {
 export interface UiContext {
     root?: string; file: string; isDirectory: boolean; candidates: UiCandidate[];
     libraries: string[]; commands: string[]; truncated?: boolean;
+    entries?: PluginEntry[];
+}
+
+/** Saved definitions paired only with UI candidates having command evidence. */
+export function inferProjectEntries(files: ResourceFile[], root: string, config?: ProjectConfig): PluginEntry[] {
+    const projectFiles = files.filter(item => !path.relative(root, item.file).split(path.sep)
+        .some(part => /^(?:tests?|examples?|samples?)$/i.test(part)));
+    const templates = commandTemplates(projectFiles);
+    const commands = inferProjectCommands(projectFiles, root);
+    const candidates = inferUiContext(root, root, true, projectFiles, config).candidates;
+    const entries: PluginEntry[] = [];
+    for (const command of commands) {
+        const definitions = command.startsWith('!') ? templates.filter(item => '!' + item.name === command).map(item => item.file)
+            : projectFiles.filter(item => sourcePattern.test(item.file) && registered(source(item.text)).includes(command)).map(item => item.file);
+        for (const definition of definitions) {
+            const cmake = projectFiles.filter(item => path.basename(item.file) === 'CMakeLists.txt' && within(path.dirname(item.file), definition))
+                .sort((a, b) => b.file.length - a.file.length)[0];
+            const scope = cmake ? path.dirname(cmake.file) : root;
+            const localLibraries = cmake ? cmakeLibraries([cmake], scope === root ? config : undefined) : cmakeLibraries(projectFiles, config);
+            const interfaces = candidates.filter(candidate => candidate.commands.includes(command) && within(scope, candidate.file));
+            for (const library of localLibraries.length ? localLibraries : [undefined]) {
+                if (interfaces.length) {
+                    for (const ui of interfaces) entries.push({ library, command, ui: { file: ui.file, relative: ui.relative } });
+                } else { entries.push({ library, command }); }
+            }
+        }
+    }
+    return entries.filter((entry, index) => entries.findIndex(other => other.library === entry.library && other.command === entry.command && other.ui?.file === entry.ui?.file) === index);
+}
+
+/** Current-file rows use the same pairs as the project, restricted to its evidence. */
+export function inferContextEntries(context: UiContext, files: ResourceFile[], config?: ProjectConfig): PluginEntry[] {
+    if (!context.root) { return []; }
+    const cmake = files.filter(item => path.basename(item.file) === 'CMakeLists.txt' && within(path.dirname(item.file), context.file))
+        .sort((a, b) => b.file.length - a.file.length)[0];
+    const scope = cmake ? path.dirname(cmake.file) : context.root;
+    const entries = inferProjectEntries(files.filter(item => within(scope, item.file)), scope, scope === context.root ? config : undefined)
+        .map(entry => entry.ui ? { ...entry, ui: { ...entry.ui, relative: path.relative(context.root!, entry.ui.file) } } : entry);
+    const direct = context.candidates.filter(candidate => candidate.score >= 450);
+    const activeFile = files.find(item => item.file === context.file);
+    const activeCommands = new Set(activeFile ? inferProjectCommands([activeFile], context.root) : []);
+    const matching = entries.filter(entry => entry.command && activeCommands.has(entry.command)
+        || entry.ui && direct.some(ui => ui.file === entry.ui!.file));
+    if (matching.length) { return matching; }
+    if (context.isDirectory) {
+        const local = new Set(inferProjectCommands(files.filter(item => within(context.file, item.file)), context.root));
+        return entries.filter(entry => entry.ui && within(context.file, entry.ui.file) || entry.command && local.has(entry.command));
+    }
+    const interfaces = direct.length ? direct : [undefined];
+    return (context.libraries.length ? context.libraries : [undefined]).flatMap(library => interfaces.map(ui => ({
+        library, ...(ui ? { ui: { file: ui.file, relative: ui.relative } } : {})
+    })));
 }
 const sourcePattern = /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)$/i;
 const stem = (file: string) => path.basename(file, path.extname(file));

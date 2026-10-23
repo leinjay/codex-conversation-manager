@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { inferProjectCommands, inferUiContext, scanUiResources } = require('../dist/uiAssociation');
+const { inferProjectCommands, inferProjectEntries, inferContextEntries, inferUiContext, scanUiResources } = require('../dist/uiAssociation');
 const { detectDesigner, designerVersion, launchDesigner } = require('../dist/designer');
 
 const root = '/example';
@@ -40,6 +40,38 @@ test('project commands need neither a UI nor project.json, and rescanning saved 
   assert.deepEqual(inferProjectCommands((await scanUiResources(temporary)).files, temporary), ['~After']);
   await fs.unlink(file);
   assert.deepEqual(inferProjectCommands((await scanUiResources(temporary)).files, temporary), []);
+});
+
+test('project entries pair real library/command/UI evidence and keep commands without UI visible', () => {
+  const files = [...resources,
+    { file: '/example/src/plain.cpp', text: 'ZwCommandFunctionLoad("Plain", run, 0);' },
+    { file: '/example/tests/mock.cpp', text: 'ZwCommandFunctionLoad("TestOnly", run, 0);' }
+  ];
+  assert.deepEqual(inferProjectEntries(files, root), [
+    { library: 'Custom.so', command: '!FilletBox', ui: { file: '/example/resources/forms/FilletBox.ui', relative: 'resources/forms/FilletBox.ui' } },
+    { library: 'Custom.so', command: '~Plain' }
+  ]);
+  const context = inferUiContext(root, '/example/src/plain.cpp', false, files);
+  assert.deepEqual(inferContextEntries(context, files), [{ library: 'Custom.so', command: '~Plain' }]);
+  const configured = inferProjectEntries(files, root, { libraryName: 'Actual' });
+  assert.ok(configured.every(entry => entry.library === 'Actual.so'));
+  assert.equal(configured.some(entry => entry.command === '~MakeFilletBox' || entry.ui?.file.endsWith('Other.ui')), false);
+  assert.deepEqual(inferProjectEntries([{ file: '/example/main.cpp', text: 'cvxCmdFunc("Only", run, 0);' }], root), [{ library: undefined, command: '~Only' }]);
+});
+
+test('entries preserve standalone form commands and scope duplicate command names to their CMake module', () => {
+  const files = ['One', 'Two'].flatMap(name => [
+    { file: `/example/${name}/CMakeLists.txt`, text: `add_library(${name} SHARED main.cpp)\nset_target_properties(${name} PROPERTIES PREFIX "")` },
+    { file: `/example/${name}/Form.ui`, text: ui('Form') },
+    { file: `/example/${name}/main.cpp`, text: 'cvxCmdFunc("Show", show, 0);cvxFormCreate("Form", 0);' }
+  ]);
+  const entries = inferProjectEntries(files, root);
+  assert.equal(entries.length, 2);
+  for (const name of ['One', 'Two']) {
+    assert.ok(entries.some(entry => entry.library === `${name}.so` && entry.command === '~Show' && entry.ui?.relative === `${name}/Form.ui`));
+  }
+  const context = inferUiContext(root, '/example/One/Form.ui', false, files);
+  assert.ok(inferContextEntries(context, files).some(entry => entry.command === '~Show'));
 });
 
 test('rank the current UI, matching template, direct command reference and template callback above unrelated forms', () => {

@@ -1,0 +1,63 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const Module = require('node:module');
+const originalLoad = Module._load;
+const vscode = { workspace: {}, window: {}, Uri: { file: file => ({ fsPath: file, toString: () => file }) }, ConfigurationTarget: { WorkspaceFolder: 3 } };
+Module._load = function (request, parent, isMain) { return request === 'vscode' ? vscode : originalLoad.call(this, request, parent, isMain); };
+const { Workbench } = require('../dist/extension');
+Module._load = originalLoad;
+
+test('Designer links validate their listed project, save dirty UI files, and open the exact clicked UI', async t => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'zw3d-designer-link-'));
+  t.after(() => fs.rm(temporary, { recursive: true, force: true }));
+  const root = path.join(temporary, 'project');
+  await fs.mkdir(root);
+  const first = path.join(root, 'first.ui');
+  const clicked = path.join(root, 'clicked with spaces.ui');
+  const outside = path.join(temporary, 'outside.ui');
+  for (const file of [first, clicked, outside]) await fs.writeFile(file, '<ui/>');
+  const capture = path.join(temporary, 'args.json');
+  const executable = path.join(temporary, 'fake designer');
+  await fs.writeFile(executable, `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2)));`, { mode: 0o755 });
+  let saved = false;
+  vscode.workspace.isTrusted = true;
+  vscode.workspace.getWorkspaceFolder = () => ({ uri: vscode.Uri.file(root) });
+  vscode.workspace.getConfiguration = () => ({ get: () => executable });
+  vscode.workspace.textDocuments = [{ uri: vscode.Uri.file(clicked), isDirty: true, save: async () => { saved = true; return true; } }];
+  const instance = Object.create(Workbench.prototype);
+  instance.projectCommands = { root, entries: [first, clicked].map(file => ({ command: '~Show', ui: { file } })) };
+  instance.log = () => {};
+  instance.refresh = async () => {};
+  await instance.openUiInDesigner(clicked, root);
+  assert.equal(saved, true);
+  for (let attempt = 0; attempt < 100 && !await fs.stat(capture).then(() => true, () => false); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(JSON.parse(await fs.readFile(capture, 'utf8')), [clicked]);
+  await assert.rejects(instance.openUiInDesigner(first, '/stale-project'), /链接已失效/);
+  await assert.rejects(instance.openUiInDesigner(outside, root), /链接已失效/);
+  const link = path.join(root, 'escaped.ui');
+  await fs.symlink(outside, link);
+  instance.projectCommands.entries.push({ ui: { file: link } });
+  await assert.rejects(instance.openUiInDesigner(link, root), /不在当前项目/);
+  vscode.workspace.textDocuments[0].save = async () => false;
+  await assert.rejects(instance.openUiInDesigner(clicked, root), /尚未保存/);
+  vscode.workspace.textDocuments[0].save = async () => true;
+  let savedSetting;
+  vscode.workspace.getConfiguration = () => ({
+    get: () => path.join(temporary, 'missing'),
+    update: async (...args) => { savedSetting = args; }
+  });
+  vscode.window.showOpenDialog = async () => [vscode.Uri.file(executable)];
+  instance.fileContext = { root, entries: [{ ui: { file: clicked } }], candidates: [] };
+  instance.projectCommands = undefined;
+  await instance.openUiInDesigner(clicked, root);
+  assert.deepEqual(savedSetting, ['designerPath', executable, 3]);
+  vscode.window.showOpenDialog = async () => undefined;
+  savedSetting = undefined;
+  await instance.openUiInDesigner(clicked, root);
+  assert.equal(savedSetting, undefined, 'cancelling tool selection does not change configuration');
+  vscode.workspace.isTrusted = false;
+  await assert.rejects(instance.openUiInDesigner(clicked, root), /信任/);
+});

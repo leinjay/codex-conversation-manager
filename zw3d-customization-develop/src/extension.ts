@@ -2,6 +2,11 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import * as os from 'node:os';
+import { addShellLibraryPath, checkEnvironment, EnvironmentHealth, prependLibraryPath, restoreLibraryEnvironment } from './environment';
+import { inspectRuntimeLibraries, logRuntimeLibraries, requireRuntimeLibraries } from './runtimeLibraries';
+import { inspectHost, RestoredHost, stopOwnedHost } from './hostProcess';
+import { RunSession, runSessionKey, savedRunSession } from './runSession';
 import { spawn, ChildProcess } from 'node:child_process';
 import { connectExistingProject, suggestExistingProject } from './importProject';
 import { initializeDetectedProject } from './projectDetection';
@@ -11,10 +16,10 @@ import { upgradeStoredTemplate } from './templateUpgrade';
 import { resetProjectConfiguration } from './resetProject';
 import { participatingNewSources, sourceCandidate } from './compileCommands';
 import { detectDesigner, designerVersion, launchDesigner } from './designer';
-import { inferProjectCommands, inferUiContext, ResourceFile, scanUiResources, UiContext } from './uiAssociation';
+import { inferProjectCommands, inferProjectEntries, inferContextEntries, inferUiContext, PluginEntry, ResourceFile, scanUiResources, UiContext } from './uiAssociation';
 import { buildProject, createProject, CreateOptions, debugConfiguration, deploy, detectTools, exists,
     configureClangdDatabase, buildDirectories, BuildProfile, findExecutable, identifier, initGit, Project, readProject, runtime,
-    selectBuildProfile, Tools, withBuildProfile } from './core';
+    selectBuildProfile, Tools, withBuildProfile, zw3dFiles } from './core';
 
 function toolSettings(uri?: vscode.Uri): Partial<Tools> {
     const config = vscode.workspace.getConfiguration('zw3d', uri);
@@ -39,10 +44,21 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
     private view?: vscode.WebviewView;
     private panel?: vscode.WebviewPanel;
     private busy = false;
-    private status = '准备就绪';
+    private status = '正在检查开发环境…';
+    private environmentOwnsStatus = true;
+    private environmentHealth?: EnvironmentHealth;
+    private environmentTimer?: NodeJS.Timeout;
+    private environmentSequence = 0;
     private selectedAction?: string;
     private selectedRoot?: string;
-    private activeHost?: ChildProcess;
+    private activeHost?: ChildProcess | RestoredHost;
+    private runSession?: RunSession;
+    private restoreTask?: Promise<void>;
+    private persistenceTask: Promise<void> = Promise.resolve();
+    private savedRunSignature?: string;
+    private runTask?: Promise<void>;
+    private runControlTask?: Promise<void>;
+    private hostTimer?: NodeJS.Timeout;
     private abort?: AbortController;
     private readonly output = vscode.window.createOutputChannel('ZW3D 二次开发');
     private readonly disposables: vscode.Disposable[] = [];
@@ -60,11 +76,19 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
     private contextSequence = 0;
     private readonly resourceCache = new Map<string, { files: ResourceFile[]; truncated: boolean }>();
     private commandRoot?: string;
-    private projectCommands?: { root: string; commands: string[]; truncated?: boolean };
+    private projectCommands?: { root: string; commands: string[]; entries: PluginEntry[]; truncated?: boolean };
     private commandTimer?: NodeJS.Timeout;
     private commandSequence = 0;
 
     constructor(private readonly context: vscode.ExtensionContext) {
+        this.restoreTask = this.restoreHost().catch(error => {
+            this.log(`恢复 ZW3D 运行信息失败：${errorMessage(error)}`);
+            if (this.runSession && !this.activeHost && this.runSession.endedAt === undefined) {
+                this.runSession.state = 'failed'; this.runSession.endedAt = Date.now();
+                this.runSession.detail = `无法核验原进程：${errorMessage(error)}`;
+            }
+        });
+        void this.restoreTask.then(() => this.refresh());
         const watcher = vscode.workspace.createFileSystemWatcher('**/.zw3d/project.json');
         const cmakeWatcher = vscode.workspace.createFileSystemWatcher('**/{CMakeLists.txt,*.cmake}');
         const sourceWatcher = vscode.workspace.createFileSystemWatcher('**/*.{c,cc,cpp,cxx,c++,C,m,mm}');
@@ -78,7 +102,7 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
             sourceWatcher, sourceWatcher.onDidCreate(uri => { void this.compileInputChanged(uri, true); }),
             resourceWatcher, resourceWatcher.onDidCreate(updateContext), resourceWatcher.onDidChange(updateContext), resourceWatcher.onDidDelete(updateContext),
             cmakeWatcher.onDidChange(updateContext), cmakeWatcher.onDidCreate(updateContext),
-            watcher.onDidChange(updateContext), watcher.onDidCreate(updateContext), watcher.onDidDelete(updateContext),
+            watcher.onDidChange(() => { updateContext(); this.scheduleEnvironment(true); }), watcher.onDidCreate(() => { updateContext(); this.scheduleEnvironment(true); }), watcher.onDidDelete(() => { updateContext(); this.scheduleEnvironment(true); }),
             vscode.window.onDidChangeActiveTextEditor(editor => {
                 if (editor?.document.uri.scheme === 'file') {
                     this.contextUri = editor.document.uri; this.contextIsDirectory = false; this.scheduleFileContext();
@@ -89,19 +113,24 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
             }),
             vscode.workspace.onDidChangeWorkspaceFolders(() => { void this.refresh(); this.scheduleDetection(); updateContext(); }),
             vscode.workspace.onDidGrantWorkspaceTrust(() => { this.scheduleDetection(); this.scheduleFileContext(); this.scheduleProjectCommands(); }),
-            vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('zw3d')) { this.scheduleDetection(); void this.refresh(); } }),
+            vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('zw3d')) { this.scheduleDetection(); this.scheduleEnvironment(true); void this.refresh(); } }),
             vscode.workspace.onDidSaveTextDocument(document => {
                 if (/\.(?:c|cc|cpp|cxx|h|hpp|hxx)$/i.test(document.fileName)) { this.scheduleDetection(); }
                 if (document.uri.scheme === 'file' && /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|ui|tcmd)$/i.test(document.fileName)) { this.scheduleProjectCommands(); }
             }),
             vscode.debug.onDidTerminateDebugSession(() => void this.refresh()));
         this.scheduleDetection();
+        this.scheduleEnvironment();
+        this.hostTimer = setInterval(() => { void this.pollHost(); }, 2000);
         this.contextUri = vscode.window.activeTextEditor?.document.uri.scheme === 'file' ? vscode.window.activeTextEditor.document.uri : undefined;
         this.scheduleFileContext();
         void this.upgradeTemplates().catch(error => this.log(errorMessage(error)));
     }
     dispose(): void {
         this.disposed = true;
+        this.environmentSequence++;
+        if (this.hostTimer) { clearInterval(this.hostTimer); }
+        if (this.environmentTimer) { clearTimeout(this.environmentTimer); }
         if (this.scanTimer) { clearTimeout(this.scanTimer); }
         if (this.compileTimer) { clearTimeout(this.compileTimer); }
         if (this.contextTimer) { clearTimeout(this.contextTimer); }
@@ -117,6 +146,51 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
     private log = (message: string): void => {
         if (!this.disposed) { this.output.append(message.endsWith('\n') ? message : message + '\n'); }
     };
+    private persistRunSession(): Promise<void> {
+        if (!this.runSession) { return this.persistenceTask; }
+        const signature = JSON.stringify(this.runSession);
+        if (signature === this.savedRunSignature) { return this.persistenceTask; }
+        const snapshot = JSON.parse(signature) as RunSession;
+        this.savedRunSignature = signature;
+        this.persistenceTask = this.persistenceTask.catch(() => {}).then(() => this.context.workspaceState.update(runSessionKey, snapshot)).catch(error => {
+            if (this.savedRunSignature === signature) { this.savedRunSignature = undefined; }
+            this.log(`保存 ZW3D 运行信息失败：${errorMessage(error)}`);
+        });
+        return this.persistenceTask;
+    }
+    private async restoreHost(): Promise<void> {
+        const session = savedRunSession(this.context.workspaceState.get(runSessionKey));
+        if (!session) { return; }
+        this.runSession = session;
+        this.selectedRoot = session.root;
+        if (session.endedAt === undefined) {
+            const host = session.identity ? new RestoredHost(session.identity) : undefined;
+            const state = await host?.poll();
+            if (this.disposed) { return; }
+            if (host && state) {
+                this.activeHost = host;
+                session.state = state; session.detail = undefined; session.stopRequested = false;
+                this.watchHost(host, session);
+                this.log(`已恢复 ZW3D 运行信息：${session.profile}，PID ${session.pid}。`);
+            } else {
+                session.state = 'exited'; session.endedAt = Date.now();
+                session.detail = '恢复时原进程已退出或身份不匹配；离线期间的准确退出时间未知。';
+            }
+        }
+        await this.persistRunSession();
+    }
+    private watchHost(child: ChildProcess | RestoredHost, session: RunSession): void {
+        child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+            if (this.disposed || this.runSession !== session) { return; }
+            if (this.activeHost === child) { this.activeHost = undefined; }
+            session.state = session.stopRequested || code === 0 ? 'exited' : 'failed'; session.endedAt = Date.now();
+            session.detail = child instanceof RestoredHost ? '恢复的 ZW3D 进程已退出（退出码不可用）。' : `退出：${code ?? signal}`;
+            this.log(`ZW3D ${session.detail}`);
+            if (!session.stopRequested && code !== 0 && !this.disposed) { void this.report(new Error(`ZW3D 退出：${code ?? signal}。请检查许可证、显示环境及 SDK 运行库；调试启动可查看宿主输出。`)); }
+            void this.persistRunSession().catch(error => this.log(`保存运行信息失败：${errorMessage(error)}`));
+            void this.refresh();
+        });
+    }
     private scheduleProjectCommands(): void {
         if (this.disposed) { return; }
         this.commandSequence++;
@@ -127,12 +201,12 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
         const root = this.commandRoot;
         const sequence = ++this.commandSequence;
         if (!root || !vscode.workspace.isTrusted) { this.projectCommands = undefined; await this.refresh(); return; }
-        let buildDirectory;
-        try { buildDirectory = (await readProject(root)).config.buildDirectory; } catch { /* Also show commands before project initialization. */ }
+        let config;
+        try { config = (await readProject(root)).config; } catch { /* Also show commands before project initialization. */ }
         // Read saved files afresh; UI association may use unsaved editor buffers, this list does not.
-        const scan = await scanUiResources(root, buildDirectory);
+        const scan = await scanUiResources(root, config?.buildDirectory);
         if (sequence !== this.commandSequence || this.disposed || root !== this.commandRoot) { return; }
-        this.projectCommands = { root, commands: inferProjectCommands(scan.files, root), truncated: scan.truncated };
+        this.projectCommands = { root, commands: inferProjectCommands(scan.files, root), entries: inferProjectEntries(scan.files, root, config), truncated: scan.truncated };
         await this.refresh();
     }
     private scheduleFileContext(): void {
@@ -169,6 +243,7 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
                 return document ? { file: item.file, text: document.getText() } : item;
             });
             context = { ...inferUiContext(root, uri.fsPath, isDirectory, files, config), truncated: resources.truncated };
+            context.entries = inferContextEntries(context, files, config);
         }
         if (sequence !== this.contextSequence || this.disposed) { return; }
         this.fileContext = context;
@@ -192,25 +267,50 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
                 detail: `${candidate.reasons.join('；')}${candidate.warnings.length ? ' · ' + candidate.warnings.join('；') : ''}`, candidate
             })), { title: '选择关联 UI（按关联度排序）', placeHolder: '首项为当前最可能关联的 UI；同目录候选不代表已确认绑定。', matchOnDescription: true, matchOnDetail: true });
         if (!choice) { return; }
-        const uri = vscode.Uri.file(choice.candidate.file);
+        await this.openDesignerFile(choice.candidate.file, context.root);
+    }
+    private async openDesignerFile(file: string, root?: string): Promise<void> {
+        const uri = vscode.Uri.file(file);
         const document = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === uri.toString());
         if (document?.isDirty && !await document.save()) { throw new Error('UI 文件尚未保存，已停止打开 Qt Designer。'); }
-        let executable = await detectDesigner(vscode.workspace.getConfiguration('zw3d', uri).get<string>('designerPath'));
+        let configuredDesigner: string | undefined;
+        if (root) { try { configuredDesigner = (await readProject(root)).config.designerPath; } catch { /* Uninitialized project. */ } }
+        let executable = await detectDesigner(configuredDesigner || vscode.workspace.getConfiguration('zw3d', uri).get<string>('designerPath'));
         if (!executable) {
             const selected = await vscode.window.showOpenDialog({ title: '选择已有的 Qt Designer 可执行文件或启动脚本', canSelectFiles: true, canSelectFolders: false, canSelectMany: false, openLabel: '使用 Qt Designer' });
             if (!selected?.[0]) { return; }
             executable = await detectDesigner(selected[0].fsPath);
             if (!executable) { throw new Error('所选路径不是可执行文件。'); }
-            await vscode.workspace.getConfiguration('zw3d', uri).update('designerPath', executable, vscode.ConfigurationTarget.WorkspaceFolder);
+            if (configuredDesigner && root) {
+                const project = await readProject(root);
+                await fs.writeFile(path.join(root, '.zw3d/project.json'), JSON.stringify({ ...project.config, designerPath: executable }, null, 2) + '\n');
+            } else { await vscode.workspace.getConfiguration('zw3d', uri).update('designerPath', executable, vscode.ConfigurationTarget.WorkspaceFolder); }
         }
-        await launchDesigner(executable, choice.candidate.file, this.log);
-        this.status = `已在 Qt Designer 打开 ${path.basename(choice.candidate.file)}`;
+        await launchDesigner(executable, file, this.log);
+        this.status = `已在 Qt Designer 打开 ${path.basename(file)}`;
+        this.environmentOwnsStatus = false;
         await this.refresh();
+    }
+    private async openUiInDesigner(rawFile: unknown, rawRoot: unknown): Promise<void> {
+        if (!vscode.workspace.isTrusted || process.platform !== 'linux') { throw new Error('请先信任 Linux 本地工作区。'); }
+        if (typeof rawFile !== 'string' || typeof rawRoot !== 'string') { throw new Error('UI 链接已失效，请刷新后重试。'); }
+        const listed = this.projectCommands?.root === rawRoot && this.projectCommands.entries.some(entry => entry.ui?.file === rawFile)
+            || this.fileContext?.root === rawRoot && (this.fileContext.entries?.some(entry => entry.ui?.file === rawFile)
+                || this.fileContext.candidates.some(entry => entry.file === rawFile));
+        const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(rawRoot));
+        if (!listed || !folder) { throw new Error('UI 链接已失效，请刷新后重试。'); }
+        const [root, file] = await Promise.all([fs.realpath(rawRoot), fs.realpath(rawFile)]);
+        const relative = path.relative(root, file);
+        if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative) || path.extname(file).toLowerCase() !== '.ui') {
+            throw new Error('关联 UI 不在当前项目内。');
+        }
+        await this.openDesignerFile(file, root);
     }
     async report(error: unknown): Promise<void> {
         const message = errorMessage(error);
         this.log(message);
         this.status = message.split('\n')[0];
+        this.environmentOwnsStatus = false;
         await this.refresh();
         void vscode.window.showErrorMessage(message, '查看日志').then(choice => { if (choice === '查看日志') { this.showOutput(); } });
     }
@@ -221,7 +321,7 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
         return known;
     }
     private autoCompileCommands(root: string): boolean {
-        return vscode.workspace.getConfiguration('zw3d', vscode.Uri.file(root)).get<boolean>('autoRefreshCompileCommands', false);
+        return vscode.workspace.getConfiguration('zw3d', vscode.Uri.file(root)).get<boolean>('autoRefreshCompileCommands', true);
     }
     private async compileInputChanged(uri: vscode.Uri, created = false): Promise<void> {
         if (this.disposed || !vscode.workspace.isTrusted || process.platform !== 'linux') { return; }
@@ -284,6 +384,7 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
     }
     private scheduleDetection(): void {
         if (this.disposed) { return; }
+        this.scheduleEnvironment();
         if (this.scanTimer) { clearTimeout(this.scanTimer); }
         this.scanTimer = setTimeout(() => { void this.detectProjects(false).catch(error => this.log(errorMessage(error))); }, 300);
     }
@@ -344,26 +445,33 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
     async selectProject(): Promise<void> {
         const roots = await this.roots();
         const selected = await vscode.window.showQuickPick(roots.map(root => ({ label: path.basename(root), description: root })), { title: '选择当前 ZW3D 项目' });
-        if (selected) { this.selectedRoot = selected.description; await this.refresh(); }
+        if (selected) { this.selectedRoot = selected.description; this.scheduleEnvironment(true); await this.refresh(); }
     }
     async refresh(): Promise<void> {
-        if (!this.view) { return; }
+        await this.restoreTask;
+        await this.persistRunSession();
+        if (!this.view || this.disposed) { return; }
         const roots = await this.roots();
         const active = this.selectedRoot && roots.includes(this.selectedRoot) ? this.selectedRoot : roots[0];
         const commandRoot = active ?? this.fileContext?.root ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (commandRoot !== this.commandRoot) { this.commandRoot = commandRoot; this.scheduleProjectCommands(); }
-        let project: { name: string; root: string; library: string; apilibs: string; commandHint: string;
+        let project: { name: string; root: string; library: string; apilibs: string; commandHint: string; buildProfile: BuildProfile;
             cmakeArgsByProfile?: Project['config']['cmakeArgsByProfile'] } | undefined;
         let configError = '';
         if (active) {
             try {
                 const p = await readProject(active);
                 project = { name: p.config.projectName, root: p.root, library: p.config.libraryName, apilibs: p.config.apilibs,
-                    commandHint: p.config.commandHint ?? `~${p.config.projectName}`, cmakeArgsByProfile: p.config.cmakeArgsByProfile };
+                    commandHint: p.config.commandHint ?? `~${p.config.projectName}`, cmakeArgsByProfile: p.config.cmakeArgsByProfile,
+                    buildProfile: p.config.buildType === 'Release' ? 'Release' : 'Debug' };
             } catch (error) { configError = errorMessage(error); }
         }
         const detectionError = (vscode.workspace.workspaceFolders ?? []).map(folder => this.detectionErrors.get(folder.uri.fsPath)).find(Boolean);
         await this.view.webview.postMessage({ type: 'state', project, configError, detectionError, busy: this.busy, status: this.status,
+            runSession: this.runSession?.root === active ? { ...this.runSession, controlling: Boolean(this.runControlTask) } : undefined,
+            hostRunning: Boolean(this.activeHost),
+            hostProfile: this.activeHost ? this.runSession?.profile : undefined,
+            environmentIssues: this.environmentHealth?.issues,
             buildDirectories, clangdBuildDirectory,
             multiple: roots.length > 1, selectedAction: this.selectedAction,
             fileContext: this.fileContext,
@@ -385,11 +493,17 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
                 rebuildRelease: () => this.execute('rebuild', 'Release'),
                 buildDebug: () => this.execute('build', 'Debug'), runDebug: () => this.execute('run', 'Debug'),
                 rebuildDebug: () => this.execute('rebuild', 'Debug'),
+                stopRelease: () => this.controlRun('Release', false, (message as { runId?: unknown }).runId),
+                restartRelease: () => this.controlRun('Release', true, (message as { runId?: unknown }).runId),
+                stopDebug: () => this.controlRun('Debug', false, (message as { runId?: unknown }).runId),
+                restartDebug: () => this.controlRun('Debug', true, (message as { runId?: unknown }).runId),
                 configureCmakeRelease: () => this.configureCmakeArgument('Release'),
                 configureCmakeDebug: () => this.configureCmakeArgument('Debug'),
                 configure: () => this.configure(), template: () => this.editTemplate(), output: () => this.showOutput(),
+                environmentConfigure: () => this.configureEnvironment(), addLibraryPath: () => this.addLibraryPath(),
                 clangd: () => this.configureClangd(), reset: () => this.resetProject(),
                 designer: () => this.openRelatedUi(),
+                openUiDesigner: () => this.openUiInDesigner((message as { file?: unknown }).file, (message as { root?: unknown }).root),
                 autoCompileCommands: () => this.setAutoCompileCommands((message as { enabled?: unknown }).enabled),
                 detect: async () => { await this.detectProjects(); await this.detect(); }, scan: () => this.detectProjects(), select: () => this.selectProject(), cancel: () => this.abort?.abort()
             };
@@ -404,6 +518,7 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
         if (!vscode.workspace.isTrusted) { throw new Error('请先信任当前工作区。'); }
         if (process.platform !== 'linux') { throw new Error('当前版本支持 Linux ZW3D 的 .so 插件开发。'); }
         this.busy = true; this.status = title; this.abort = new AbortController();
+        this.environmentOwnsStatus = false;
         const abort = this.abort;
         await this.refresh();
         this.showOutput();
@@ -415,17 +530,28 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
             });
         } finally { this.busy = false; this.abort = undefined; await this.refresh(); this.scheduleDetection(); }
     }
-    async execute(action: 'build' | 'rebuild' | 'run' | 'debug', profile?: BuildProfile): Promise<void> {
+    async execute(action: 'build' | 'rebuild' | 'run' | 'debug', profile?: BuildProfile, previous?: RunSession): Promise<void> {
+        await this.restoreTask;
+        if (this.busy) { throw new Error('已有操作正在执行，请等待完成或点击取消。'); }
+        if (this.runControlTask && !previous) { throw new Error('请等待 ZW3D 关闭或重启完成。'); }
         const label = { build: '编译', rebuild: '重新生成', run: '编译并运行', debug: '编译并调试' }[action];
         const title = profile ? `${profile} ${label}` : label;
-        await this.operation(title, async signal => {
-            if (!await vscode.workspace.saveAll(false)) { throw new Error('部分文件未保存，已停止构建。'); }
-            const configured = await this.project();
+        let session: RunSession | undefined;
+        const task = this.operation(title, async signal => {
+            if (previous) { await this.closeHost(previous); signal.throwIfAborted(); }
+            const configured = previous ? await readProject(previous.root) : await this.project();
             const selected = action === 'debug' ? 'Debug' : profile ?? (configured.config.buildType === 'Release' ? 'Release' : 'Debug');
             const project = withBuildProfile(configured, selected);
             if (['run', 'debug'].includes(action) && (this.activeHost || vscode.debug.activeDebugSession?.configuration.type === 'cppdbg')) {
                 throw new Error('请先关闭本扩展已启动的 ZW3D 或结束当前 C++ 调试，再运行新的实例。');
             }
+            if (action === 'run') {
+                session = { id: crypto.randomUUID(), root: project.root, profile: selected, state: 'preparing' };
+                this.runSession = session;
+                await this.refresh();
+            }
+            signal.throwIfAborted();
+            if (!await vscode.workspace.saveAll(false)) { throw new Error('部分文件未保存，已停止构建。'); }
             // Validate debugger and runtime before spending time compiling or deploying.
             const debug = action === 'debug' ? await debugConfiguration(project) : undefined;
             if (debug && !vscode.extensions.getExtension('ms-vscode.cpptools')) { throw new Error('请安装 Microsoft C/C++ 扩展（ms-vscode.cpptools）。'); }
@@ -434,22 +560,89 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
             await selectBuildProfile(configured, selected);
             this.selectAction(action === 'debug' ? 'debug' : `${action}${selected}`);
             this.log(`${selected} 构建目录：${project.config.buildDirectory}`);
+            if (session) { session.state = 'building'; await this.refresh(); }
             await buildProject(project, action === 'rebuild', this.log, signal);
             await this.configureLanguageSettings(project);
             signal.throwIfAborted();
             if (!launch) { return; }
             await deploy(project, this.log);
             signal.throwIfAborted();
+            await requireRuntimeLibraries(project, this.log, signal);
+            signal.throwIfAborted();
             if (debug) {
                 const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(project.root));
                 if (!await vscode.debug.startDebugging(folder, debug as vscode.DebugConfiguration)) { throw new Error('GDB 调试未能启动，请检查调试控制台。'); }
                 this.log('GDB 调试已启动。命中断点后请查看“运行和调试”中的调用堆栈、变量和监视。');
             } else {
-                await this.launch(launch, project.config.args);
+                await this.launch(launch, project.config.args, session!);
             }
             const hint = project.config.commandHint ?? `~${project.config.projectName}`;
             this.log(hint ? `在 ZW3D 命令栏输入 ${hint} 测试命令。` : '启动后使用该项目注册的中望命令测试插件。');
         });
+        if (action === 'run') { this.runTask = task; }
+        try { await task; }
+        catch (error) {
+            if (session) {
+                session.state = session.stopRequested ? 'exited' : 'failed'; session.endedAt = Date.now(); session.detail = errorMessage(error);
+                await this.refresh();
+                if (session.stopRequested && ((error instanceof Error && error.name === 'AbortError') || /操作已取消/.test(errorMessage(error)))) { return; }
+            }
+            throw error;
+        } finally { if (this.runTask === task) { this.runTask = undefined; } }
+    }
+    private async pollHost(): Promise<void> {
+        await this.restoreTask;
+        const session = this.runSession;
+        const child = this.activeHost;
+        if (this.disposed || !session || !child?.pid || !['running', 'paused'].includes(session.state)) { return; }
+        try {
+            const next = child instanceof RestoredHost ? await child.poll()
+                : /^State:\s+[Tt]/m.test(await fs.readFile(`/proc/${child.pid}/status`, 'utf8')) ? 'paused' : 'running';
+            if (!next) { return; }
+            if (this.runSession !== session || this.activeHost !== child || !['running', 'paused'].includes(session.state)) { return; }
+            if (next !== session.state) { session.state = next; await this.refresh(); }
+        } catch { /* Retry unavailable /proc snapshots; a PID alone never establishes ownership. */ }
+    }
+    private async closeHost(session: RunSession): Promise<void> {
+        session.stopRequested = true; session.state = 'stopping'; await this.refresh();
+        const child = this.activeHost;
+        if (child && session === this.runSession) {
+            await stopOwnedHost(child);
+            if (this.activeHost === child) { this.activeHost = undefined; }
+        }
+        session.state = 'exited'; session.endedAt ??= Date.now();
+        session.detail = '用户已停止并关闭';
+        this.log(`ZW3D 已关闭${session.pid ? `（PID ${session.pid}）` : ''}。`);
+        await this.refresh();
+    }
+    private async controlRun(profile: BuildProfile, restart: boolean, id: unknown): Promise<void> {
+        await this.restoreTask;
+        const session = this.runSession;
+        if (!session || session.profile !== profile || session.id !== id) { throw new Error('运行状态已变化，请使用当前进程卡片。'); }
+        if (this.runControlTask) { return this.runControlTask; }
+        if (this.activeHost instanceof RestoredHost) {
+            await this.activeHost.poll();
+            if (this.runControlTask) { return this.runControlTask; }
+            if (this.runSession !== session) { throw new Error('运行状态已变化，请使用当前进程卡片。'); }
+        }
+        if (restart && (!this.activeHost?.pid || this.activeHost.pid !== session.pid || session.endedAt !== undefined
+            || this.activeHost.exitCode !== null || this.activeHost.signalCode !== null)) {
+            throw new Error('ZW3D 尚未启动或已退出，不能重启。请使用三角形启动按钮。');
+        }
+        const task = (async () => {
+            if (this.busy) {
+                const pending = this.runTask;
+                if (!pending) { throw new Error('请等待当前操作完成后再关闭 ZW3D。'); }
+                session.stopRequested = true; session.state = 'stopping'; this.abort?.abort(); await this.refresh();
+                await pending.catch(() => { /* execute reports real failures and handles intentional cancellation. */ });
+            }
+            if (restart) { await this.execute('run', profile, session); }
+            else { await this.operation('关闭 ZW3D', () => this.closeHost(session)); }
+        })();
+        this.runControlTask = task;
+        try { await task; }
+        catch (error) { session.state = 'failed'; session.detail = errorMessage(error); await this.refresh(); throw error; }
+        finally { if (this.runControlTask === task) { this.runControlTask = undefined; } await this.refresh(); }
     }
     private async configureCmakeArgument(profile: BuildProfile): Promise<void> {
         if (this.busy || !vscode.workspace.isTrusted) { return; }
@@ -499,20 +692,20 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
         });
         await this.configure();
     }
-    private async launch(launch: Awaited<ReturnType<typeof runtime>>, args: string[]): Promise<void> {
+    private async launch(launch: Awaited<ReturnType<typeof runtime>>, args: string[], session: RunSession): Promise<void> {
+        session.state = 'starting'; await this.refresh();
         const child = spawn(launch.program, args, { cwd: launch.cwd, env: launch.env, shell: false, detached: true, stdio: 'ignore' });
         await new Promise<void>((resolve, reject) => {
             child.once('error', reject); child.once('spawn', resolve);
         });
         this.activeHost = child;
-        child.once('exit', (code, signal) => {
-            if (this.activeHost === child) { this.activeHost = undefined; }
-            this.log(`ZW3D 退出：${code ?? signal}`);
-            if (code !== 0 && code !== null) { void this.report(new Error(`ZW3D 退出码 ${code}。请检查许可证、显示环境及 SDK 运行库；调试启动可查看宿主输出。`)); }
-            void this.refresh();
-        });
+        session.state = 'running'; session.pid = child.pid; session.startedAt = Date.now();
+        this.watchHost(child, session);
         child.unref();
+        try { session.identity = child.pid ? (await inspectHost(child.pid))?.identity : undefined; }
+        catch (error) { this.log(`无法记录 ZW3D 进程标识：${errorMessage(error)}`); }
         this.log(`已启动 ZW3D，PID ${child.pid}。`);
+        await this.refresh();
     }
     async configure(): Promise<void> {
         const roots = await this.roots();
@@ -521,6 +714,7 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
         await vscode.window.showTextDocument(vscode.Uri.file(path.join(root, '.zw3d/project.json')));
     }
     async resetProject(): Promise<void> {
+        await this.restoreTask;
         if (this.busy) { throw new Error('请等待当前操作完成后再重新配置项目。'); }
         if (this.activeHost || vscode.debug.activeDebugSession?.configuration.type === 'cppdbg') {
             throw new Error('请先关闭本扩展启动的 ZW3D 或结束 C++ 调试，再重新配置项目。');
@@ -591,20 +785,96 @@ export class Workbench implements vscode.WebviewViewProvider, vscode.Disposable 
         });
     }
     async detect(): Promise<void> {
+        await this.inspectEnvironment(true);
+    }
+    private scheduleEnvironment(takeStatus = false): void {
+        if (this.disposed) { return; }
+        if (takeStatus && !this.busy) { this.environmentOwnsStatus = true; }
+        this.environmentSequence++;
+        if (this.environmentTimer) { clearTimeout(this.environmentTimer); }
+        this.environmentTimer = setTimeout(() => { void this.inspectEnvironment(false).catch(error => this.log(errorMessage(error))); }, 500);
+    }
+    private async inspectEnvironment(manual: boolean): Promise<EnvironmentHealth | undefined> {
+        if (this.disposed || !vscode.workspace.isTrusted || process.platform !== 'linux') { return; }
+        if (manual && !this.busy) {
+            this.environmentOwnsStatus = true;
+            this.status = '正在检查开发环境…';
+            await this.refresh();
+        }
+        const sequence = ++this.environmentSequence;
         const roots = await this.roots();
         const root = this.selectedRoot && roots.includes(this.selectedRoot) ? this.selectedRoot : roots[0];
-        const tools = root ? (await readProject(root)).config : await detectTools(toolSettings());
-        const designerPath = await detectDesigner(vscode.workspace.getConfiguration('zw3d', this.contextUri).get<string>('designerPath'));
+        let project: Project | undefined;
+        if (root) { try { project = await readProject(root); } catch { /* Config editor remains available for invalid projects. */ } }
+        const tools = project?.config ?? await detectTools(toolSettings(root ? vscode.Uri.file(root) : undefined));
+        const designerPath = await detectDesigner(project?.config.designerPath || vscode.workspace.getConfiguration('zw3d', root ? vscode.Uri.file(root) : undefined).get<string>('designerPath'));
         const [versions, designer] = await Promise.all([readToolVersions(tools), designerVersion(designerPath)]);
+        const executable = project ? path.resolve(project.root, project.config.executable) : undefined;
+        let libraryDirectory: string | undefined;
+        try { if (tools.zw3dRoot) { libraryDirectory = path.join(await zw3dFiles(tools.zw3dRoot), 'ZWMold/Bin'); } } catch { /* Report missing client below. */ }
+        if (libraryDirectory && sequence === this.environmentSequence) {
+            const restored = await restoreLibraryEnvironment(os.homedir(), process.env.SHELL || '/bin/bash', libraryDirectory,
+                process.env, this.context.environmentVariableCollection.get('LD_LIBRARY_PATH')?.value);
+            if (restored) {
+                this.context.environmentVariableCollection.persistent = true;
+                this.context.environmentVariableCollection.replace('LD_LIBRARY_PATH', process.env.LD_LIBRARY_PATH!);
+                this.log(`已恢复此前添加的 ZW3D 动态库路径：${libraryDirectory}（未执行 shell 启动脚本）。`);
+            }
+        }
+        const health = await checkEnvironment(tools, versions, designerPath, executable);
+        if (project && !health.issues.some(issue => issue.message.includes('ZW3D'))) {
+            try {
+                health.runtime = await inspectRuntimeLibraries(project);
+                health.issues.push(...health.runtime.issues);
+            } catch (error) {
+                health.issues.push({ severity: 'warning', message: '无法检查实际启动的动态库依赖（查看日志）', action: 'configure' });
+                this.log(`动态库依赖检测未完成：${errorMessage(error)}`);
+            }
+        } else if (!project) {
+            health.issues.push({ severity: 'warning', message: '未接入项目，插件动态库依赖待检查', action: 'configure' });
+        }
+        if (this.disposed) { return; }
+        if (sequence === this.environmentSequence) {
+            this.environmentHealth = health;
+            if (!this.busy && (manual || this.environmentOwnsStatus)) {
+                this.environmentOwnsStatus = true;
+                this.status = health.issues.length ? '开发环境检测完成，请处理以下问题' : '准备就绪';
+            }
+        }
+        if (!manual) { await this.refresh(); return sequence === this.environmentSequence ? health : undefined; }
         this.log('开发环境检测：');
         for (const key of Object.keys(toolNames) as (keyof Tools)[]) {
             this.log(`${toolNames[key]}: ${versions[key]}\n  路径：${tools[key] || '未找到，请在设置或初始化表单中指定'}`);
         }
         this.log(`Qt Designer: ${designer}\n  路径：${designerPath || '未找到，请设置 zw3d.designerPath'}`);
+        this.log(`扩展进程 LD_LIBRARY_PATH：${process.env.LD_LIBRARY_PATH || '（未设置）'}\nSDK ZWMold 目录：${health.libraryDirectory || '无法确定，请先修正 ZW3D 安装位置'}\n实际启动环境会自动补入 SDK 和插件目录；项目 environment 显式覆盖优先，最终以依赖解析结果为准。`);
+        if (health.runtime) { logRuntimeLibraries(health.runtime, this.log); }
         this.showOutput();
-        this.status = tools.cmakePath && tools.cxxPath && tools.gdbPath && tools.zw3dRoot ? `开发环境检测通过${designerPath ? '' : '；Qt Designer 未找到（可选）'}` : '检测完成，部分路径需要手动配置';
         await this.refresh();
-        await vscode.window.showInformationMessage(this.status);
+        void vscode.window.showInformationMessage(health.issues.length ? '开发环境检测完成，请处理以下问题' : '准备就绪');
+        return health;
+    }
+    private async configureEnvironment(): Promise<void> {
+        if ((await this.roots()).length) { await this.configure(); }
+        else { await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:sponge.zw3d-customization-develop'); }
+    }
+    async addLibraryPath(): Promise<void> {
+        await this.operation('添加zw3d动态库环境变量', async () => {
+            const health = await this.inspectEnvironment(false);
+            if (!health) { throw new Error('环境配置在检查期间发生变化，请重试。'); }
+            const directory = health.libraryDirectory;
+            const info = directory ? await fs.stat(directory).catch(() => undefined) : undefined;
+            if (!directory || !info?.isDirectory()) { throw new Error('未找到 ZWMold/Bin 目录，请先修正 ZW3D 安装位置。'); }
+            const files = await addShellLibraryPath(os.homedir(), process.env.SHELL || '/bin/bash', directory);
+            process.env.LD_LIBRARY_PATH = prependLibraryPath(process.env.LD_LIBRARY_PATH, directory);
+            this.context.environmentVariableCollection.persistent = true;
+            this.context.environmentVariableCollection.replace('LD_LIBRARY_PATH', process.env.LD_LIBRARY_PATH);
+            this.log(`已将 ${directory} 添加到 LD_LIBRARY_PATH。已更新：${files.join('、')}。已有终端需重新打开，已有其他应用需重新登录或重启。`);
+            await this.inspectEnvironment(false);
+        });
+        this.environmentOwnsStatus = true;
+        await this.inspectEnvironment(false);
+        await vscode.window.showInformationMessage('已更新用户 shell 配置和本次扩展环境。请重新打开终端；已运行的其他应用不会自动更新环境。');
     }
     private templateRoot(): string {
         return vscode.workspace.getConfiguration('zw3d').get<string>('templateDirectory')?.trim() || path.join(this.context.extensionPath, 'templates/default');
@@ -704,7 +974,7 @@ export function activate(context: vscode.ExtensionContext): void {
         reconfigureProject: () => workbench.resetProject(),
         openRelatedUi: () => workbench.openRelatedUi(),
         editTemplate: () => workbench.editTemplate(), detect: () => workbench.detect(), detectProject: () => workbench.detectProjects(), selectProject: () => workbench.selectProject(),
-        showOutput: () => workbench.showOutput()
+        showOutput: () => workbench.showOutput(), addLibraryPath: () => workbench.addLibraryPath()
     };
     const actionNames: Record<string, string> = {
         createProject: 'create', importProject: 'import', editTemplate: 'template', detectProject: 'scan',
